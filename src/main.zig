@@ -1,15 +1,21 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const scanner = @import("scanner.zig");
-const token = @import("token.zig");
+const tokenizer = @import("tokenizer.zig");
+
+// TODO: later on remember that we had an error and don't try to execute the code after it.
+pub fn reportError(line: u32, message: [:0]const u8) void {
+    const stderr = std.io.getStdErr().writer();
+    stderr.print("[line {d}] Error: {s}\n", .{ line, message }) catch {};
+}
 
 fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocator) !void {
-    const lexer = scanner.Scanner{ .input = input, .allocator = allocator };
-    const tokens = lexer.scanTokens();
+    var lexer = scanner.Scanner{ .source = input, .allocator = allocator };
+    const tokens = try lexer.scanTokens();
     defer tokens.deinit();
 
-    for (tokens.items) |t| {
-        try stdout.print("{any}", .{t});
+    for (tokens.items) |token| {
+        try token.outPut(stdout);
     }
 }
 
