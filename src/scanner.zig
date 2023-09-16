@@ -1,30 +1,30 @@
 const std = @import("std");
-const tokenizer = @import("tokenizer.zig");
+const token = @import("token.zig");
 const main = @import("main.zig");
 
-const reserved_words = std.ComptimeStringMap(tokenizer.Type, .{
-    .{ "and", tokenizer.Type.and_ },
-    .{ "class", tokenizer.Type.class },
-    .{ "else", tokenizer.Type.else_ },
-    .{ "false", tokenizer.Type.false },
-    .{ "for", tokenizer.Type.for_ },
-    .{ "fun", tokenizer.Type.fun },
-    .{ "if", tokenizer.Type.if_ },
-    .{ "nil", tokenizer.Type.nil },
-    .{ "or", tokenizer.Type.or_ },
-    .{ "print", tokenizer.Type.print },
-    .{ "return", tokenizer.Type.return_ },
-    .{ "super", tokenizer.Type.super },
-    .{ "this", tokenizer.Type.this },
-    .{ "true", tokenizer.Type.true },
-    .{ "var", tokenizer.Type.var_ },
-    .{ "while", tokenizer.Type.while_ },
+const reserved_words = std.ComptimeStringMap(token.Type, .{
+    .{ "and", token.Type.and_ },
+    .{ "class", token.Type.class },
+    .{ "else", token.Type.else_ },
+    .{ "false", token.Type.false },
+    .{ "for", token.Type.for_ },
+    .{ "fun", token.Type.fun },
+    .{ "if", token.Type.if_ },
+    .{ "nil", token.Type.nil },
+    .{ "or", token.Type.or_ },
+    .{ "print", token.Type.print },
+    .{ "return", token.Type.return_ },
+    .{ "super", token.Type.super },
+    .{ "this", token.Type.this },
+    .{ "true", token.Type.true },
+    .{ "var", token.Type.var_ },
+    .{ "while", token.Type.while_ },
 });
 
 // TODO we can only handle ascii at the moment. Other utf-8 will not work.
 pub const Scanner = struct {
     const Self = @This();
-    const Return = std.ArrayList(tokenizer.Token);
+    const Return = std.ArrayList(token.Token);
 
     start_of_lexeme: u32 = 0,
     current: u32 = 0,
@@ -40,12 +40,12 @@ pub const Scanner = struct {
             try self.scanToken(&tokens);
         }
 
-        try self.addToken(&tokens, tokenizer.Type.eof, null);
+        try self.addToken(&tokens, token.Type.eof, null);
         return tokens;
     }
 
-    fn addToken(self: Self, tokens: *Return, type_: tokenizer.Type, literal: ?tokenizer.Literal) !void {
-        try tokens.append(tokenizer.Token{
+    fn addToken(self: Self, tokens: *Return, type_: token.Type, literal: ?token.Literal) !void {
+        try tokens.append(token.Token{
             .type_ = type_,
             .lexeme = null,
             .literal = literal,
@@ -54,7 +54,7 @@ pub const Scanner = struct {
     }
 
     fn scanToken(self: *Self, tokens: *Return) !void {
-        const Type = tokenizer.Type;
+        const Type = token.Type;
         const c = self.consume();
         switch (c) {
             '(' => try self.addToken(tokens, Type.left_paren, null),
@@ -105,7 +105,7 @@ pub const Scanner = struct {
                 }
 
                 _ = self.consume(); // Drop closing brace as well.
-                try self.addToken(tokens, Type.string, tokenizer.Literal{ .string = self.source[self.start_of_lexeme + 1 .. self.current - 1] });
+                try self.addToken(tokens, Type.string, token.Literal{ .string = self.source[self.start_of_lexeme + 1 .. self.current - 1] });
             },
             '0'...'9' => {
                 while (std.ascii.isDigit(self.peek())) _ = self.consume();
@@ -117,7 +117,7 @@ pub const Scanner = struct {
                 }
 
                 const number = try std.fmt.parseFloat(f64, self.source[self.start_of_lexeme..self.current]);
-                try self.addToken(tokens, Type.number, tokenizer.Literal{ .number = number });
+                try self.addToken(tokens, Type.number, token.Literal{ .number = number });
             },
             'a'...'z', 'A'...'Z', '_' => {
                 var next = self.peek();

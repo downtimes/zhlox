@@ -45,6 +45,7 @@ pub const Literal = union(enum) {
     string: []const u8,
 };
 
+// TODO split into union(enum) to get rid of the optionals everywhere.
 pub const Token = struct {
     const Self = @This();
     type_: Type,
@@ -52,7 +53,7 @@ pub const Token = struct {
     literal: ?Literal,
     line: u32,
 
-    pub fn outPut(self: Self, writer: anytype) !void {
+    pub fn output(self: Self, writer: anytype) !void {
         if (self.literal == null) {
             try writer.print("{s} {s}\n", .{ @tagName(self.type_), self.lexeme orelse "" });
         } else {

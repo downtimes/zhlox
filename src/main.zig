@@ -1,7 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const scanner = @import("scanner.zig");
-const tokenizer = @import("tokenizer.zig");
+const token = @import("token.zig");
+const ast = @import("ast.zig");
 
 // TODO: later on remember that we had an error and don't try to execute the code after it.
 pub fn reportError(line: u32, message: [:0]const u8) void {
@@ -14,8 +15,8 @@ fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocat
     const tokens = try lexer.scanTokens();
     defer tokens.deinit();
 
-    for (tokens.items) |token| {
-        try token.outPut(stdout);
+    for (tokens.items) |t| {
+        try t.output(stdout);
     }
 }
 
@@ -49,6 +50,15 @@ pub fn main() !void {
     defer _ = gba.deinit();
     var args = try std.process.argsWithAllocator(gba.allocator());
     defer args.deinit();
+
+    var expression = ast.Expr{ .binary = ast.Binary{
+        .left = &ast.Expr{ .unary = ast.Unary{ .operator = token.Token{ .type_ = token.Type.minus, .lexeme = "-", .literal = null, .line = 1 }, .right = &ast.Expr{ .literal = token.Literal{ .number = 123 } } } },
+        .operator = token.Token{ .type_ = token.Type.star, .lexeme = "*", .literal = null, .line = 1 },
+        .right = &ast.Expr{ .grouping = &ast.Expr{ .literal = token.Literal{ .number = 45.67 } } },
+    } };
+    const stdout = std.io.getStdOut().writer();
+    ast.printExpr(expression, stdout);
+    _ = try stdout.write("\n");
 
     //skip over our own programm name.
     _ = args.skip();
