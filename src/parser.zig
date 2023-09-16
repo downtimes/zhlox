@@ -43,7 +43,7 @@ pub const Parser = struct {
         var result = try self.comparison();
         errdefer result.destroySelf(self.allocator);
 
-        while (self.match(.{ token.Type.bang_equal, token.Type.equal_equal })) {
+        while (self.match(&[_]token.Type{ token.Type.bang_equal, token.Type.equal_equal })) {
             const operator = self.previous();
             const right = try self.comparison();
             errdefer right.destroySelf(self.allocator);
@@ -59,7 +59,7 @@ pub const Parser = struct {
         var result = try self.term();
         errdefer result.destroySelf(self.allocator);
 
-        while (self.match(.{ token.Type.greater, token.Type.gerater_equal, token.Type.less, token.Type.less_equal })) {
+        while (self.match(&[_]token.Type{ token.Type.greater, token.Type.gerater_equal, token.Type.less, token.Type.less_equal })) {
             const operator = self.previous();
             const right = try self.term();
             errdefer right.destroySelf(self.allocator);
@@ -75,7 +75,7 @@ pub const Parser = struct {
         var result = try self.factor();
         errdefer result.destroySelf(self.allocator);
 
-        while (self.match(.{ token.Type.minus, token.Type.plus })) {
+        while (self.match(&[_]token.Type{ token.Type.minus, token.Type.plus })) {
             const operator = self.previous();
             const right = try self.factor();
             errdefer right.destroySelf(self.allocator);
@@ -91,7 +91,7 @@ pub const Parser = struct {
         var result = try self.unary();
         errdefer result.destroySelf(self.allocator);
 
-        while (self.match(.{ token.Type.slash, token.Type.star })) {
+        while (self.match(&[_]token.Type{ token.Type.slash, token.Type.star })) {
             const operator = self.previous();
             const right = try self.unary();
             errdefer right.destroySelf(self.allocator);
@@ -104,7 +104,7 @@ pub const Parser = struct {
     }
 
     fn unary(self: *Self) ParseError!*ast.Expr {
-        if (self.match(.{ token.Type.bang, token.Type.minus })) {
+        if (self.match(&[_]token.Type{ token.Type.bang, token.Type.minus })) {
             const operator = self.previous();
             const right = try self.unary();
             errdefer right.destroySelf(self.allocator);
@@ -118,29 +118,29 @@ pub const Parser = struct {
     }
 
     fn primary(self: *Self) ParseError!*ast.Expr {
-        if (self.match(.{token.Type.false})) {
+        if (self.match(&[_]token.Type{token.Type.false})) {
             const new_expr = try self.allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .literal = token.Literal{ .bool_ = false } };
             return new_expr;
         }
-        if (self.match(.{token.Type.true})) {
+        if (self.match(&[_]token.Type{token.Type.true})) {
             const new_expr = try self.allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .literal = token.Literal{ .bool_ = true } };
             return new_expr;
         }
-        if (self.match(.{token.Type.nil})) {
+        if (self.match(&[_]token.Type{token.Type.nil})) {
             const new_expr = try self.allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .literal = null };
             return new_expr;
         }
 
-        if (self.match(.{ token.Type.number, token.Type.string })) {
+        if (self.match(&[_]token.Type{ token.Type.number, token.Type.string })) {
             const new_expr = try self.allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .literal = self.previous().literal };
             return new_expr;
         }
 
-        if (self.match(.{token.Type.left_paren})) {
+        if (self.match(&[_]token.Type{token.Type.left_paren})) {
             const result = try self.expression();
             errdefer result.destroySelf(self.allocator);
 
@@ -158,9 +158,8 @@ pub const Parser = struct {
         return ParseError.UnexpectedToken;
     }
 
-    fn match(self: *Self, types: anytype) bool {
-        inline for (std.meta.fields(@TypeOf(types))) |field| {
-            const t = @field(types, field.name);
+    fn match(self: *Self, types: []const token.Type) bool {
+        for (types) |t| {
             if (self.check(t)) {
                 self.advance();
                 return true;

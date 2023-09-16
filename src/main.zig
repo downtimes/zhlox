@@ -8,8 +8,7 @@ const ast = @import("ast.zig");
 pub fn reportError(line: u32, messages: anytype) void {
     const stderr = std.io.getStdErr().writer();
     stderr.print("[line {d}] Error: ", .{line}) catch {};
-    inline for (std.meta.fields(@TypeOf(messages))) |field| {
-        const message = @field(messages, field.name);
+    for (messages) |message| {
         stderr.print("{s}", .{message}) catch {};
     }
     _ = stderr.write("\n") catch {};
@@ -23,7 +22,7 @@ fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocat
     var p = parser.Parser{ .tokens = tokens.items, .allocator = allocator };
     const expr = p.expression() catch {
         const diagnostic = p.diagnostic.?;
-        reportError(diagnostic.found.line, .{ "found ", diagnostic.found.lexeme, "; ", diagnostic.message });
+        reportError(diagnostic.found.line, [_][]const u8{ "found ", diagnostic.found.lexeme, "; ", diagnostic.message });
         return;
     };
     defer expr.destroySelf(allocator);
