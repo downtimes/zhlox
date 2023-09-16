@@ -47,7 +47,7 @@ pub const Scanner = struct {
     fn addToken(self: Self, tokens: *Return, type_: token.Type, literal: ?token.Literal) !void {
         try tokens.append(token.Token{
             .type_ = type_,
-            .lexeme = null,
+            .lexeme = self.source[self.start_of_lexeme..self.current],
             .literal = literal,
             .line = self.line,
         });
@@ -100,7 +100,7 @@ pub const Scanner = struct {
                 }
 
                 if (self.isAtEnd()) {
-                    main.reportError(self.line, "Unterminated string.");
+                    main.reportError(self.line, .{"Unterminated string."});
                     return;
                 }
 
@@ -134,7 +134,7 @@ pub const Scanner = struct {
             ' ', '\r', '\t' => {},
             // TODO scan all the invalid characters until the next valid one and report the range instead of each
             //      character.
-            else => main.reportError(self.line, "Unexpected character in input."),
+            else => main.reportError(self.line, .{"Unexpected character in input."}),
         }
     }
 
