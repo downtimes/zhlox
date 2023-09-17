@@ -9,7 +9,7 @@ const main = @import("main.zig");
 pub const Value = union(enum) {
     const Self = @This();
 
-    string: []const u8,
+    string: []const u8, // We expect the memory of this slice to be owned by our interpreter or by the environment.
     number: f64,
     bool_: bool,
     nil: void,
@@ -19,6 +19,22 @@ pub const Value = union(enum) {
             .string => |s| allocator.free(s),
             else => {},
         }
+    }
+
+    // TODO I'm not happy with the current state of the string handling in my code. Think of a better sheme that
+    //      scales better and isn't as brittle.
+    pub fn deepCopy(self: Self, allocator: std.mem.Allocator) !Self {
+        var result = self;
+
+        switch (self) {
+            .string => |s| {
+                const new_str = try allocator.alloc(u8, s.len);
+                std.mem.copyForwards(u8, new_str, s);
+                result.string = new_str;
+            },
+            else => {},
+        }
+        return result;
     }
 
     // Strange rule according to Lex definition...
@@ -76,17 +92,11 @@ pub const Interpreter = struct {
     diagnostic: ?Diagonstic = null,
 
     pub fn deinit(self: *Self) void {
-        // TODO the global env does not own the values atm. We need to also free the values in the environment.
         self.global_env.deinit();
     }
 
     pub fn new(allocator: std.mem.Allocator) !Self {
-        const env = enviroment.Environment{
-            .arena = try allocator.create(std.heap.ArenaAllocator),
-            .values = std.StringHashMapUnmanaged(Value){},
-        };
-        env.arena.* = std.heap.ArenaAllocator.init(allocator);
-
+        const env = try enviroment.Environment.init(allocator);
         return Interpreter{ .allocator = allocator, .global_env = env };
     }
 
@@ -121,7 +131,7 @@ pub const Interpreter = struct {
         switch (stmt) {
             .expr => |e| {
                 var value = try self.evaluateExpression(e.*);
-                value.deinit(self.allocator);
+                defer value.deinit(self.allocator);
             },
             .print => |e| {
                 // TODO do I want to propagate print errors upwards?
@@ -141,7 +151,9 @@ pub const Interpreter = struct {
                 //      We want to initialize a variable to Value.nil, but when we do we can't change the type of value
                 //      afterwards. Therefore we need do to seperate define calls here.
                 if (decl.initializer != null) {
-                    const value = try self.evaluateExpression(decl.initializer.?.*);
+                    var value = try self.evaluateExpression(decl.initializer.?.*);
+                    defer value.deinit(self.allocator);
+
                     try self.global_env.define(decl.name.lexeme, value);
                     return;
                 }
@@ -170,7 +182,7 @@ pub const Interpreter = struct {
             },
             .unary => |u| {
                 var right = try self.evaluateExpression(u.right.*);
-                errdefer right.deinit(self.allocator);
+                defer right.deinit(self.allocator);
 
                 if (u.operator.type_ == token.Type.bang) {
                     return Value{ .bool_ = !right.isTruthy() };
@@ -192,8 +204,8 @@ pub const Interpreter = struct {
             .binary => |b| {
                 var left = try self.evaluateExpression(b.left.*);
                 var right = try self.evaluateExpression(b.right.*);
-                errdefer left.deinit(self.allocator);
-                errdefer right.deinit(self.allocator);
+                defer left.deinit(self.allocator);
+                defer right.deinit(self.allocator);
 
                 if (@as(std.meta.Tag(Value), left) == .number and @as(std.meta.Tag(Value), right) == .number) {
                     switch (b.operator.type_) {
@@ -216,9 +228,6 @@ pub const Interpreter = struct {
 
                 if (@as(std.meta.Tag(Value), left) == .string and @as(std.meta.Tag(Value), right) == .string) {
                     if (b.operator.type_ == .plus) {
-                        defer left.deinit(self.allocator);
-                        defer right.deinit(self.allocator);
-
                         const combined = try std.mem.concat(self.allocator, u8, &[_][]const u8{ left.string, right.string });
                         return Value{ .string = combined };
                     }
@@ -249,8 +258,8 @@ pub const Interpreter = struct {
                 return RuntimError.Unimplemented;
             },
             .variable => |variable| {
-                std.debug.print("Getting variable {s}", .{variable.lexeme});
-                const val = self.global_env.get(variable);
+                const val = self.global_env.get(variable, self.allocator);
+
                 if (val == null) {
                     self.diagnostic = Diagonstic{
                         .token_ = variable,
@@ -262,7 +271,9 @@ pub const Interpreter = struct {
                 return val.?;
             },
             .assign => |assignment| {
-                const value = try self.evaluateExpression(assignment.value.*);
+                var value = try self.evaluateExpression(assignment.value.*);
+                defer value.deinit(self.allocator);
+
                 self.global_env.assign(assignment.name, value) catch |err| {
                     switch (err) {
                         enviroment.EnvironmentError.VariableNotFound => {

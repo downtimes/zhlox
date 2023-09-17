@@ -34,14 +34,8 @@ pub const Parser = struct {
     }
 
     pub fn parseInto(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Ast {
-        var result = ast.Ast{
-            .arena = try allocator.create(std.heap.ArenaAllocator),
-            .statements = std.ArrayListUnmanaged(ast.Stmt){},
-        };
-        errdefer allocator.destroy(result.arena);
-        result.arena.* = std.heap.ArenaAllocator.init(allocator);
-        errdefer result.arena.deinit();
-        var arena = result.arena.allocator();
+        var result = try ast.Ast.init(allocator);
+        errdefer result.deinit();
 
         var last_err: ?ParseError = null;
         while (!self.isAtEnd()) {
@@ -49,7 +43,7 @@ pub const Parser = struct {
             // one statement should not interfere with parsing another statement. Therefore we give the user
             // as much information about their errors as possible. If any one error occured we remember it and return
             // the last error to the caller. Therefore the caller can't execute an invalid syntax tree.
-            const decl = self.declaration(arena) catch |err| {
+            const decl = self.declaration(result.arena.allocator()) catch |err| {
                 if (err == ParseError.OutOfMemory) return err;
 
                 last_err = err;
@@ -67,7 +61,7 @@ pub const Parser = struct {
                 }
                 continue;
             };
-            try result.statements.append(arena, decl);
+            try result.append(decl);
         }
 
         if (last_err != null) {

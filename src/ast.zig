@@ -49,12 +49,27 @@ pub const Ast = struct {
     const Self = @This();
 
     arena: *std.heap.ArenaAllocator,
+    // Expectation is that all sub things of statements are heap allocated into the arena above.
     statements: std.ArrayListUnmanaged(Stmt),
+
+    pub fn init(allocator: std.mem.Allocator) !Self {
+        var result = Ast{
+            .arena = try allocator.create(std.heap.ArenaAllocator),
+            .statements = std.ArrayListUnmanaged(Stmt){},
+        };
+        result.arena.* = std.heap.ArenaAllocator.init(allocator);
+
+        return result;
+    }
 
     pub fn deinit(self: Self) void {
         const parent_alloc = self.arena.child_allocator;
         self.arena.deinit();
         parent_alloc.destroy(self.arena);
+    }
+
+    pub fn append(self: *Self, statement: Stmt) !void {
+        try self.statements.append(self.arena.allocator(), statement);
     }
 };
 
