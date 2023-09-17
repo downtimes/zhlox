@@ -179,7 +179,7 @@ pub const Interpreter = struct {
                 };
             },
             .grouping => |g| {
-                return try self.evaluateExpression(g.*);
+                return self.evaluateExpression(g.*);
             },
             .unary => |u| {
                 var right = try self.evaluateExpression(u.right.*);
@@ -202,114 +202,126 @@ pub const Interpreter = struct {
                 }
                 return RuntimError.Unimplemented;
             },
-            .binary => |b| {
-                var left = try self.evaluateExpression(b.left.*);
-                var right = try self.evaluateExpression(b.right.*);
-                defer left.deinit(self.allocator);
-                defer right.deinit(self.allocator);
-
-                if (@as(std.meta.Tag(Value), left) == .number and @as(std.meta.Tag(Value), right) == .number) {
-                    switch (b.operator.type_) {
-                        .minus => return Value{ .number = left.number - right.number },
-                        // TODO possibly create runtime error here when dividing by 0 when nominator not 0 itself,
-                        //      currently we return inf since zig does the same. Need to look into how other lox
-                        //      interpreters handle this case
-                        .slash => return Value{ .number = left.number / right.number },
-                        .star => return Value{ .number = left.number * right.number },
-                        .plus => return Value{ .number = left.number + right.number },
-                        .greater => return Value{ .bool_ = left.number > right.number },
-                        .gerater_equal => return Value{ .bool_ = left.number >= right.number },
-                        .less => return Value{ .bool_ = left.number < right.number },
-                        .less_equal => return Value{ .bool_ = left.number <= right.number },
-                        else => {
-                            // TODO
-                        },
-                    }
-                }
-
-                if (@as(std.meta.Tag(Value), left) == .string and @as(std.meta.Tag(Value), right) == .string) {
-                    if (b.operator.type_ == .plus) {
-                        const combined = try std.mem.concat(self.allocator, u8, &[_][]const u8{ left.string, right.string });
-                        return Value{ .string = combined };
-                    }
-                }
-
-                switch (b.operator.type_) {
-                    .equal_equal => return Value{ .bool_ = left.equal(right) },
-                    .bang_equal => return Value{ .bool_ = !left.equal(right) },
-                    .minus, .star, .slash, .less, .less_equal, .greater, .gerater_equal => {
-                        self.diagnostic = Diagonstic{
-                            .token_ = b.operator,
-                            .message = "operands must be numbers.",
-                        };
-                        return RuntimError.IllegalBinaryOperand;
-                    },
-                    .plus => {
-                        self.diagnostic = Diagonstic{
-                            .token_ = b.operator,
-                            .message = "operands must be two numbers or two strings.",
-                        };
-                        return RuntimError.IllegalBinaryOperand;
-                    },
-                    else => {
-                        // TODO
-                    },
-                }
-
-                return RuntimError.Unimplemented;
+            .binary => |binary| {
+                return self.evaluateBinary(binary);
             },
             .variable => |variable| {
-                var environment_index = self.environments.items.len;
-                const val = found: while (environment_index > 0) {
-                    environment_index -= 1;
-                    const val = self.environments.items[environment_index].get(variable, self.allocator);
-                    if (val != null) {
-                        break :found val;
-                    }
-                } else null;
-
-                if (val == null) {
-                    self.diagnostic = Diagonstic{
-                        .token_ = variable,
-                        .message = "is an undefined variable.",
-                    };
-                    return RuntimError.UndefinedVariable;
-                }
-
-                return val.?;
+                return self.getVariable(variable);
             },
             .assign => |assignment| {
-                var value = try self.evaluateExpression(assignment.value.*);
-
-                var environment_index = self.environments.items.len;
-                while (environment_index > 0) {
-                    environment_index -= 1;
-                    var current_environment = &self.environments.items[environment_index];
-                    current_environment.assign(assignment.name, value) catch |err| {
-                        switch (err) {
-                            // Go up one level in the environment chain.
-                            enviroment.EnvironmentError.VariableNotFound => {
-                                continue;
-                            },
-                            enviroment.EnvironmentError.OutOfMemory => {
-                                return RuntimError.OutOfMemory;
-                            },
-                        }
-                    };
-
-                    // Assignment was successfull so we can return the value
-                    return value;
-                }
-
-                // No assignment possible so we report an error.
-                self.diagnostic = Diagonstic{
-                    .token_ = assignment.name,
-                    .message = "is an undefined variable.",
-                };
-                return RuntimError.UndefinedVariable;
+                return self.evaluateAssignment(assignment);
             },
         }
 
         return RuntimError.Unimplemented;
+    }
+
+    fn getVariable(self: *Self, variable: token.Token) RuntimError!Value {
+        var environment_index = self.environments.items.len;
+        const val = found: while (environment_index > 0) {
+            environment_index -= 1;
+            const val = self.environments.items[environment_index].get(variable, self.allocator);
+            if (val != null) {
+                break :found val;
+            }
+        } else null;
+
+        if (val == null) {
+            self.diagnostic = Diagonstic{
+                .token_ = variable,
+                .message = "is an undefined variable.",
+            };
+            return RuntimError.UndefinedVariable;
+        }
+
+        return val.?;
+    }
+
+    fn evaluateBinary(self: *Self, binary: ast.Binary) RuntimError!Value {
+        var left = try self.evaluateExpression(binary.left.*);
+        var right = try self.evaluateExpression(binary.right.*);
+        defer left.deinit(self.allocator);
+        defer right.deinit(self.allocator);
+
+        if (@as(std.meta.Tag(Value), left) == .number and @as(std.meta.Tag(Value), right) == .number) {
+            switch (binary.operator.type_) {
+                .minus => return Value{ .number = left.number - right.number },
+                // TODO possibly create runtime error here when dividing by 0 when nominator not 0 itself,
+                //      currently we return inf since zig does the same. Need to look into how other lox
+                //      interpreters handle this case
+                .slash => return Value{ .number = left.number / right.number },
+                .star => return Value{ .number = left.number * right.number },
+                .plus => return Value{ .number = left.number + right.number },
+                .greater => return Value{ .bool_ = left.number > right.number },
+                .gerater_equal => return Value{ .bool_ = left.number >= right.number },
+                .less => return Value{ .bool_ = left.number < right.number },
+                .less_equal => return Value{ .bool_ = left.number <= right.number },
+                else => {
+                    // TODO
+                },
+            }
+        }
+
+        if (@as(std.meta.Tag(Value), left) == .string and @as(std.meta.Tag(Value), right) == .string) {
+            if (binary.operator.type_ == .plus) {
+                const combined = try std.mem.concat(self.allocator, u8, &[_][]const u8{ left.string, right.string });
+                return Value{ .string = combined };
+            }
+        }
+
+        switch (binary.operator.type_) {
+            .equal_equal => return Value{ .bool_ = left.equal(right) },
+            .bang_equal => return Value{ .bool_ = !left.equal(right) },
+            .minus, .star, .slash, .less, .less_equal, .greater, .gerater_equal => {
+                self.diagnostic = Diagonstic{
+                    .token_ = binary.operator,
+                    .message = "operands must be numbers.",
+                };
+                return RuntimError.IllegalBinaryOperand;
+            },
+            .plus => {
+                self.diagnostic = Diagonstic{
+                    .token_ = binary.operator,
+                    .message = "operands must be two numbers or two strings.",
+                };
+                return RuntimError.IllegalBinaryOperand;
+            },
+            else => {
+                // TODO
+            },
+        }
+
+        return RuntimError.Unimplemented;
+    }
+
+    fn evaluateAssignment(self: *Self, expr: ast.Assignment) RuntimError!Value {
+        var value = try self.evaluateExpression(expr.value.*);
+
+        var environment_index = self.environments.items.len;
+        while (environment_index > 0) {
+            environment_index -= 1;
+            var current_environment = &self.environments.items[environment_index];
+            current_environment.assign(expr.name, value) catch |err| {
+                switch (err) {
+                    // Go up one level in the environment chain.
+                    enviroment.EnvironmentError.VariableNotFound => {
+                        continue;
+                    },
+                    enviroment.EnvironmentError.OutOfMemory => {
+                        return RuntimError.OutOfMemory;
+                    },
+                }
+            };
+
+            // Assignment was successfull so we can return the value
+            return value;
+        }
+
+        // No assignment possible so we report an error.
+        self.diagnostic = Diagonstic{
+            .token_ = expr.name,
+            .message = "is an undefined variable.",
+        };
+        return RuntimError.UndefinedVariable;
     }
 };
