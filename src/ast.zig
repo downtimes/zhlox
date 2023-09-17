@@ -20,28 +20,24 @@ pub const Literal = union(enum) {
     nil: void,
 };
 
+pub const Ast = struct {
+    const Self = @This();
+
+    arena: *std.heap.ArenaAllocator,
+    expr: Expr,
+
+    pub fn deinit(self: Self) void {
+        const parent_alloc = self.arena.child_allocator;
+        self.arena.deinit();
+        parent_alloc.destroy(self.arena);
+    }
+};
+
 pub const Expr = union(enum) {
     binary: Binary,
     grouping: *Expr,
     literal: Literal,
     unary: Unary,
-
-    pub fn destroySelf(self: *@This(), allocator: std.mem.Allocator) void {
-        switch (self.*) {
-            .binary => |b| {
-                b.left.destroySelf(allocator);
-                b.right.destroySelf(allocator);
-            },
-            .grouping => |g| {
-                g.destroySelf(allocator);
-            },
-            .literal => {},
-            .unary => |u| {
-                u.right.destroySelf(allocator);
-            },
-        }
-        allocator.destroy(self);
-    }
 };
 
 pub fn printExpr(expr: Expr, writer: anytype) void {

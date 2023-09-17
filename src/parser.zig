@@ -10,12 +10,10 @@ pub const Diagnostic = struct {
     message: []const u8,
 };
 
-// TODO think about how to handle allocation in the best way. Arena probably. Where to save the allocator?
 pub const Parser = struct {
     const Self = @This();
 
     tokens: []token.Token,
-    allocator: std.mem.Allocator,
     current: u32 = 0,
     diagnostic: ?Diagnostic = null,
 
@@ -35,107 +33,111 @@ pub const Parser = struct {
         }
     }
 
-    pub fn expression(self: *Self) ParseError!*ast.Expr {
-        return try self.equality();
+    pub fn parseInto(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Ast {
+        var result = ast.Ast{
+            .arena = try allocator.create(std.heap.ArenaAllocator),
+            .expr = undefined,
+        };
+        errdefer allocator.destroy(result.arena);
+        result.arena.* = std.heap.ArenaAllocator.init(allocator);
+        errdefer result.arena.deinit();
+
+        result.expr = (try self.expression(result.arena.allocator())).*;
+        return result;
     }
 
-    fn equality(self: *Self) ParseError!*ast.Expr {
-        var result = try self.comparison();
-        errdefer result.destroySelf(self.allocator);
+    fn expression(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+        return try self.equality(allocator);
+    }
+
+    fn equality(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+        var result = try self.comparison(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.bang_equal, token.Type.equal_equal })) {
             const operator = self.previous();
-            const right = try self.comparison();
-            errdefer right.destroySelf(self.allocator);
+            const right = try self.comparison(allocator);
 
-            const new_expr = try self.allocator.create(ast.Expr);
+            const new_expr = try allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .binary = ast.Binary{ .left = result, .operator = operator, .right = right } };
             result = new_expr;
         }
         return result;
     }
 
-    fn comparison(self: *Self) ParseError!*ast.Expr {
-        var result = try self.term();
-        errdefer result.destroySelf(self.allocator);
+    fn comparison(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+        var result = try self.term(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.greater, token.Type.gerater_equal, token.Type.less, token.Type.less_equal })) {
             const operator = self.previous();
-            const right = try self.term();
-            errdefer right.destroySelf(self.allocator);
+            const right = try self.term(allocator);
 
-            const new_expr = try self.allocator.create(ast.Expr);
+            const new_expr = try allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .binary = ast.Binary{ .left = result, .operator = operator, .right = right } };
             result = new_expr;
         }
         return result;
     }
 
-    fn term(self: *Self) ParseError!*ast.Expr {
-        var result = try self.factor();
-        errdefer result.destroySelf(self.allocator);
+    fn term(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+        var result = try self.factor(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.minus, token.Type.plus })) {
             const operator = self.previous();
-            const right = try self.factor();
-            errdefer right.destroySelf(self.allocator);
+            const right = try self.factor(allocator);
 
-            const new_expr = try self.allocator.create(ast.Expr);
+            const new_expr = try allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .binary = ast.Binary{ .left = result, .operator = operator, .right = right } };
             result = new_expr;
         }
         return result;
     }
 
-    fn factor(self: *Self) ParseError!*ast.Expr {
-        var result = try self.unary();
-        errdefer result.destroySelf(self.allocator);
+    fn factor(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+        var result = try self.unary(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.slash, token.Type.star })) {
             const operator = self.previous();
-            const right = try self.unary();
-            errdefer right.destroySelf(self.allocator);
+            const right = try self.unary(allocator);
 
-            const new_expr = try self.allocator.create(ast.Expr);
+            const new_expr = try allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .binary = ast.Binary{ .left = result, .operator = operator, .right = right } };
             result = new_expr;
         }
         return result;
     }
 
-    fn unary(self: *Self) ParseError!*ast.Expr {
+    fn unary(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
         if (self.match(&[_]token.Type{ token.Type.bang, token.Type.minus })) {
             const operator = self.previous();
-            const right = try self.unary();
-            errdefer right.destroySelf(self.allocator);
+            const right = try self.unary(allocator);
 
-            const new_expr = try self.allocator.create(ast.Expr);
+            const new_expr = try allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .unary = ast.Unary{ .operator = operator, .right = right } };
             return new_expr;
         }
 
-        return try self.primary();
+        return try self.primary(allocator);
     }
 
-    fn primary(self: *Self) ParseError!*ast.Expr {
+    fn primary(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
         if (self.match(&[_]token.Type{token.Type.false})) {
-            const new_expr = try self.allocator.create(ast.Expr);
+            const new_expr = try allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .literal = ast.Literal{ .bool_ = false } };
             return new_expr;
         }
         if (self.match(&[_]token.Type{token.Type.true})) {
-            const new_expr = try self.allocator.create(ast.Expr);
+            const new_expr = try allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .literal = ast.Literal{ .bool_ = true } };
             return new_expr;
         }
         if (self.match(&[_]token.Type{token.Type.nil})) {
-            const new_expr = try self.allocator.create(ast.Expr);
+            const new_expr = try allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .literal = ast.Literal.nil };
             return new_expr;
         }
 
         if (self.match(&[_]token.Type{ token.Type.number, token.Type.string })) {
-            const new_expr = try self.allocator.create(ast.Expr);
+            const new_expr = try allocator.create(ast.Expr);
             // Literal should be there since we matched on the type.
             const literal = switch (self.previous().literal.?) {
                 .number => |n| ast.Literal{ .number = n },
@@ -146,11 +148,10 @@ pub const Parser = struct {
         }
 
         if (self.match(&[_]token.Type{token.Type.left_paren})) {
-            const result = try self.expression();
-            errdefer result.destroySelf(self.allocator);
+            const result = try self.expression(allocator);
 
             try self.consume(token.Type.right_paren, "Expected closing ')' after expression.");
-            const new_expr = try self.allocator.create(ast.Expr);
+            const new_expr = try allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .grouping = result };
             return new_expr;
         }

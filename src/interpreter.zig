@@ -88,7 +88,7 @@ pub const Interpreter = struct {
                 return try self.execute(g.*);
             },
             .unary => |u| {
-                const right = try self.execute(u.right.*);
+                var right = try self.execute(u.right.*);
                 errdefer right.deinit(self.allocator);
 
                 if (u.operator.type_ == token.Type.bang) {

@@ -14,22 +14,24 @@ pub fn reportError(line: u32, messages: []const []const u8) void {
     _ = stderr.write("\n") catch {};
 }
 
+// TODO probably move this function to the interpreter later so that the interpreters state can be
+//      persistet easily after each run command. Especially important for the REPL.
 fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocator) !void {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
-    var lexer = scanner.Scanner{ .source = input };
-    const tokens = try lexer.scanTokens(arena.allocator());
+    var scan = scanner.Scanner{ .source = input };
+    const tokens = try scan.scanTokens(arena.allocator());
 
-    var parse = parser.Parser{ .tokens = tokens.items, .allocator = arena.allocator() };
-    const expr = parse.expression() catch {
+    var parse = parser.Parser{ .tokens = tokens.items };
+    const parse_tree = parse.parseInto(arena.allocator()) catch {
         const diagnostic = parse.diagnostic.?;
         reportError(diagnostic.found.line, &[_][]const u8{ "found ", diagnostic.found.lexeme, "; ", diagnostic.message });
         return;
     };
     var interpret = interpreter.Interpreter{ .allocator = allocator };
 
-    var value = interpret.execute(expr.*) catch |err| {
+    var value = interpret.execute(parse_tree.expr) catch |err| {
         if (err == interpreter.RuntimError.Unimplemented) {
             _ = try stdout.write("Hit unimplemented part of the interpreter.");
         } else {
