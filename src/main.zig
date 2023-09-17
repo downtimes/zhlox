@@ -3,9 +3,9 @@ const builtin = @import("builtin");
 const scanner = @import("scanner.zig");
 const token = @import("token.zig");
 const parser = @import("parser.zig");
-const ast = @import("ast.zig");
+const interpreter = @import("interpreter.zig");
 
-pub fn reportError(line: u32, messages: anytype) void {
+pub fn reportError(line: u32, messages: []const []const u8) void {
     const stderr = std.io.getStdErr().writer();
     stderr.print("[line {d}] Error: ", .{line}) catch {};
     for (messages) |message| {
@@ -22,12 +22,29 @@ fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocat
     var p = parser.Parser{ .tokens = tokens.items, .allocator = allocator };
     const expr = p.expression() catch {
         const diagnostic = p.diagnostic.?;
-        reportError(diagnostic.found.line, [_][]const u8{ "found ", diagnostic.found.lexeme, "; ", diagnostic.message });
+        reportError(diagnostic.found.line, &[_][]const u8{ "found ", diagnostic.found.lexeme, "; ", diagnostic.message });
         return;
     };
     defer expr.destroySelf(allocator);
+    var interpret = interpreter.Interpreter{};
 
-    ast.printExpr(expr.*, stdout);
+    const value = interpret.execute(expr.*) catch |err| {
+        if (err == interpreter.RuntimError.Unimplemented) {
+            _ = try stdout.write("Hit unimplemented part of the interpreter.");
+        } else {
+            const diagnostic = interpret.diagnostic.?;
+            reportError(diagnostic.token_.line, &[_][]const u8{ diagnostic.token_.lexeme, " ", diagnostic.message });
+        }
+        return;
+    };
+
+    switch (value) {
+        .number => |n| try stdout.print("{d}", .{n}),
+        .string => |s| try stdout.print("{s}", .{s}),
+        .bool_ => |b| try stdout.print("{}", .{b}),
+        .nil => _ = try stdout.write("nil"),
+    }
+
     _ = try stdout.write("\n");
 }
 

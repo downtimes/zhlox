@@ -120,23 +120,28 @@ pub const Parser = struct {
     fn primary(self: *Self) ParseError!*ast.Expr {
         if (self.match(&[_]token.Type{token.Type.false})) {
             const new_expr = try self.allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .literal = token.Literal{ .bool_ = false } };
+            new_expr.* = ast.Expr{ .literal = ast.Literal{ .bool_ = false } };
             return new_expr;
         }
         if (self.match(&[_]token.Type{token.Type.true})) {
             const new_expr = try self.allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .literal = token.Literal{ .bool_ = true } };
+            new_expr.* = ast.Expr{ .literal = ast.Literal{ .bool_ = true } };
             return new_expr;
         }
         if (self.match(&[_]token.Type{token.Type.nil})) {
             const new_expr = try self.allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .literal = null };
+            new_expr.* = ast.Expr{ .literal = ast.Literal.nil };
             return new_expr;
         }
 
         if (self.match(&[_]token.Type{ token.Type.number, token.Type.string })) {
             const new_expr = try self.allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .literal = self.previous().literal };
+            // Literal should be there since we matched on the type.
+            const literal = switch (self.previous().literal.?) {
+                .number => |n| ast.Literal{ .number = n },
+                .string => |s| ast.Literal{ .string = s },
+            };
+            new_expr.* = ast.Expr{ .literal = literal };
             return new_expr;
         }
 

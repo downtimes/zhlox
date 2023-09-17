@@ -43,10 +43,8 @@ pub const Type = enum {
 pub const Literal = union(enum) {
     number: f64,
     string: []const u8,
-    bool_: bool,
 };
 
-// TODO split into union(enum) to get rid of the optionals everywhere.
 pub const Token = struct {
     const Self = @This();
     type_: Type,

@@ -1,5 +1,6 @@
 const std = @import("std");
 const token = @import("token.zig");
+const parser = @import("parser.zig");
 
 pub const Binary = struct {
     left: *Expr,
@@ -12,10 +13,17 @@ pub const Unary = struct {
     right: *Expr,
 };
 
+pub const Literal = union(enum) {
+    number: f64,
+    string: []const u8,
+    bool_: bool,
+    nil: void,
+};
+
 pub const Expr = union(enum) {
     binary: Binary,
     grouping: *Expr,
-    literal: ?token.Literal, // TODO split ast literals from scanner literals.
+    literal: Literal,
     unary: Unary,
 
     pub fn destroySelf(self: *@This(), allocator: std.mem.Allocator) void {
@@ -51,21 +59,20 @@ pub fn printExpr(expr: Expr, writer: anytype) void {
             _ = writer.write(")") catch {};
         },
         .literal => |l| {
-            if (l == null) {
-                _ = writer.write("null") catch {};
-            } else {
-                switch (l.?) {
-                    .number => |n| {
-                        writer.print("{d}", .{n}) catch {};
-                    },
-                    .string => |s| {
-                        writer.print("\"{s}\"", .{s}) catch {};
-                    },
-                    .bool_ => |b| {
-                        const text = if (b) "true" else "false";
-                        _ = writer.write(text) catch {};
-                    },
-                }
+            switch (l) {
+                .number => |n| {
+                    writer.print("{d}", .{n}) catch {};
+                },
+                .string => |s| {
+                    writer.print("\"{s}\"", .{s}) catch {};
+                },
+                .bool_ => |b| {
+                    const text = if (b) "true" else "false";
+                    _ = writer.write(text) catch {};
+                },
+                .nil => {
+                    _ = writer.write("nil") catch {};
+                },
             }
         },
         .unary => |u| {
