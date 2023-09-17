@@ -33,9 +33,15 @@ pub const Ast = struct {
     }
 };
 
+pub const VariableDeclaration = struct {
+    name: token.Token,
+    initializer: ?*Expr,
+};
+
 pub const Stmt = union(enum) {
     expr: *Expr,
     print: *Expr,
+    var_decl: VariableDeclaration,
 };
 
 pub const Expr = union(enum) {
@@ -43,6 +49,7 @@ pub const Expr = union(enum) {
     grouping: *Expr,
     literal: Literal,
     unary: Unary,
+    variable: token.Token,
 };
 
 pub fn printExpr(expr: Expr, writer: anytype) void {

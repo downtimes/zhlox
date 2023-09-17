@@ -25,7 +25,7 @@ pub const Parser = struct {
 
             switch (self.peek().type_) {
                 //Any of the keywords also opens a statement and we are good to go
-                .class | .fun | .var_ | .for_ | .if_ | .while_ | .print | .return_ => return,
+                .class, .fun, .var_, .for_, .if_, .while_, .print, .return_ => return,
                 else => {},
             }
 
@@ -43,11 +43,52 @@ pub const Parser = struct {
         errdefer result.arena.deinit();
         var arena = result.arena.allocator();
 
+        var last_err: ?ParseError = null;
         while (!self.isAtEnd()) {
-            try result.statements.append(arena, try self.statement(arena));
+            // Keep going on statement errors. We synchronize to the next statement beginning so that a mistake in
+            // one statement should not interfere with parsing another statement. Therefore we give the user
+            // as much information about their errors as possible. If any one error occured we remember it and return
+            // the last error to the caller. Therefore the caller can't execute an invalid syntax tree.
+            const decl = self.declaration(arena) catch |err| {
+                if (err == ParseError.OutOfMemory) return err;
+
+                last_err = err;
+                if (self.diagnostic == null) {
+                    const diagnostic = self.diagnostic.?;
+                    main.reportError(diagnostic.found.line, &[_][]const u8{diagnostic.message});
+                }
+                self.synchronize();
+                continue;
+            };
+            try result.statements.append(arena, decl);
+        }
+
+        if (last_err != null) {
+            return last_err.?;
         }
 
         return result;
+    }
+
+    fn declaration(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+        if (self.match(&[_]token.Type{token.Type.var_})) {
+            return try self.variableDeclaration(allocator);
+        }
+
+        return try self.statement(allocator);
+    }
+
+    fn variableDeclaration(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+        try self.consume(token.Type.identifier, "Expected variable name.");
+        const name = self.previous();
+
+        var initializer: ?*ast.Expr = null;
+        if (self.match(&[_]token.Type{token.Type.equal})) {
+            initializer = try self.expression(allocator);
+        }
+
+        try self.consume(token.Type.semicolon, "Expected ';' after variable declaration.");
+        return ast.Stmt{ .var_decl = ast.VariableDeclaration{ .name = name, .initializer = initializer } };
     }
 
     fn statement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
@@ -166,6 +207,12 @@ pub const Parser = struct {
                 .string => |s| ast.Literal{ .string = s },
             };
             new_expr.* = ast.Expr{ .literal = literal };
+            return new_expr;
+        }
+
+        if (self.match(&[_]token.Type{token.Type.identifier})) {
+            const new_expr = try allocator.create(ast.Expr);
+            new_expr.* = ast.Expr{ .variable = self.previous() };
             return new_expr;
         }
 

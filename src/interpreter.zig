@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const token = @import("token.zig");
+const enviroment = @import("environment.zig");
 
 pub const Value = union(enum) {
     const Self = @This();
@@ -57,7 +58,7 @@ pub const Value = union(enum) {
     }
 };
 
-pub const RuntimError = error{ MinusOperand, IllegalBinaryOperand, Unimplemented, OutOfMemory } || std.fs.File.WriteError;
+pub const RuntimError = error{ MinusOperand, UndefinedVariable, IllegalBinaryOperand, Unimplemented, OutOfMemory } || std.fs.File.WriteError;
 
 pub const Diagonstic = struct {
     token_: token.Token, // Associated token to get the operation and the line number.
@@ -67,8 +68,23 @@ pub const Diagonstic = struct {
 pub const Interpreter = struct {
     const Self = @This();
 
+    global_env: enviroment.Environment,
     allocator: std.mem.Allocator,
     diagnostic: ?Diagonstic = null,
+
+    pub fn deinit(self: *Self) void {
+        self.global_env.deinit();
+    }
+
+    pub fn new(allocator: std.mem.Allocator) !Self {
+        const env = enviroment.Environment{
+            .arena = try allocator.create(std.heap.ArenaAllocator),
+            .values = std.StringHashMapUnmanaged(Value){},
+        };
+        env.arena.* = std.heap.ArenaAllocator.init(allocator);
+
+        return Interpreter{ .allocator = allocator, .global_env = env };
+    }
 
     pub fn execute(self: *Self, output: std.fs.File.Writer, statements: []ast.Stmt) RuntimError!void {
         for (statements) |stmt| {
@@ -94,6 +110,17 @@ pub const Interpreter = struct {
                     .nil => _ = try output.write("nil"),
                 }
                 _ = try output.write("\n");
+            },
+            .var_decl => |decl| {
+                // TODO workaround for a compiler bug https://github.com/ziglang/zig/issues/10253
+                //      We want to initialize a variable to Value.nil, but when we do we can't change the type of value
+                //      afterwards. Therefore we need do to seperate define calls here.
+                if (decl.initializer != null) {
+                    const value = try self.evaluateExpression(decl.initializer.?.*);
+                    return try self.global_env.define(decl.name.lexeme, value);
+                }
+
+                try self.global_env.define(decl.name.lexeme, Value.nil);
             },
         }
     }
@@ -194,6 +221,18 @@ pub const Interpreter = struct {
                 }
 
                 return RuntimError.Unimplemented;
+            },
+            .variable => |variable| {
+                const val = self.global_env.get(variable);
+                if (val == null) {
+                    self.diagnostic = Diagonstic{
+                        .token_ = variable,
+                        .message = "is an undefined variable.",
+                    };
+                    return RuntimError.UndefinedVariable;
+                }
+
+                return val.?;
             },
         }
 

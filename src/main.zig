@@ -24,12 +24,10 @@ fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocat
     const tokens = try scan.scanTokens(arena.allocator());
 
     var parse = parser.Parser{ .tokens = tokens.items };
-    const parse_tree = parse.parseInto(arena.allocator()) catch {
-        const diagnostic = parse.diagnostic.?;
-        reportError(diagnostic.found.line, &[_][]const u8{ "found ", diagnostic.found.lexeme, "; ", diagnostic.message });
-        return;
-    };
-    var interpret = interpreter.Interpreter{ .allocator = allocator };
+    const parse_tree = try parse.parseInto(arena.allocator());
+
+    var interpret = try interpreter.Interpreter.new(allocator);
+    defer interpret.deinit();
 
     interpret.execute(stdout, parse_tree.statements.items) catch |err| {
         if (err == interpreter.RuntimError.Unimplemented) {
