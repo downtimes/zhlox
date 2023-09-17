@@ -1,45 +1,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const scanner = @import("scanner.zig");
-const token = @import("token.zig");
-const parser = @import("parser.zig");
 const interpreter = @import("interpreter.zig");
 
 pub fn reportError(line: u32, messages: []const []const u8) void {
     const stderr = std.io.getStdErr().writer();
-    stderr.print("[line {d}] Error: ", .{line}) catch {};
+    stderr.print("[line {d}] ", .{line}) catch {};
     for (messages) |message| {
         stderr.print("{s}", .{message}) catch {};
     }
     _ = stderr.write("\n") catch {};
-}
-
-// TODO probably move this function to the interpreter later so that the interpreters state can be
-//      persistet easily after each run command. Especially important for the REPL.
-fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocator) !void {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-
-    var scan = scanner.Scanner{ .source = input };
-    const tokens = try scan.scanTokens(arena.allocator());
-
-    var parse = parser.Parser{ .tokens = tokens.items };
-    const parse_tree = try parse.parseInto(arena.allocator());
-
-    var interpret = try interpreter.Interpreter.new(allocator);
-    defer interpret.deinit();
-
-    interpret.execute(stdout, parse_tree.statements.items) catch |err| {
-        if (err == interpreter.RuntimError.Unimplemented) {
-            _ = try stdout.write("Hit unimplemented part of the interpreter.");
-        } else {
-            const diagnostic = interpret.diagnostic.?;
-            reportError(diagnostic.token_.line, &[_][]const u8{ diagnostic.token_.lexeme, " ", diagnostic.message });
-        }
-        // TODO possibly return an error value here to set a nonzero exit code when main exits to tell script
-        //      users in their shell that something went wrong.
-        return;
-    };
 }
 
 fn runRepl(allocator: std.mem.Allocator) !void {
@@ -47,6 +16,9 @@ fn runRepl(allocator: std.mem.Allocator) !void {
     const stdout = std.io.getStdOut();
     var buffer = std.ArrayList(u8).init(allocator);
     defer buffer.deinit();
+
+    var interpret = try interpreter.Interpreter.new(allocator);
+    defer interpret.deinit();
 
     while (true) {
         _ = try stdout.write("> ");
@@ -56,7 +28,8 @@ fn runRepl(allocator: std.mem.Allocator) !void {
             _ = buffer.pop();
         }
         if (buffer.items.len == 0) break;
-        try run(stdout.writer(), buffer.items, allocator);
+        // In interactive mode we don't want to bring the whole programm down just because the user mistyped something.
+        interpret.run(stdout.writer(), buffer.items) catch {};
     }
 }
 
@@ -65,7 +38,11 @@ fn runFile(path: [:0]const u8, allocator: std.mem.Allocator) !void {
     defer file.close();
     const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     defer allocator.free(bytes);
-    try run(std.io.getStdOut().writer(), bytes, allocator);
+
+    var interpret = try interpreter.Interpreter.new(allocator);
+    defer interpret.deinit();
+
+    try interpret.run(std.io.getStdOut().writer(), bytes);
 }
 
 pub fn main() !void {

@@ -3,7 +3,7 @@ const token = @import("token.zig");
 const main = @import("main.zig");
 const ast = @import("ast.zig");
 
-const ParseError = error{ UnexpectedToken, OutOfMemory };
+const ParseError = error{ UnexpectedToken, InvalidAssignment, OutOfMemory };
 
 pub const Diagnostic = struct {
     found: token.Token,
@@ -53,11 +53,18 @@ pub const Parser = struct {
                 if (err == ParseError.OutOfMemory) return err;
 
                 last_err = err;
-                if (self.diagnostic == null) {
+                if (self.diagnostic != null) {
                     const diagnostic = self.diagnostic.?;
-                    main.reportError(diagnostic.found.line, &[_][]const u8{diagnostic.message});
+                    const found = self.diagnostic.?.found;
+                    main.reportError(diagnostic.found.line, &[_][]const u8{ "Parse Error: ", found.lexeme, " ", diagnostic.message });
                 }
-                self.synchronize();
+
+                // In case of invalid assignment the parsing found an error but we are not confused about the state
+                // so we aren't in panic mode and there is no need to synchronize. Synchronization might gloss over
+                // other errors that are usefull for our users.
+                if (err != ParseError.InvalidAssignment) {
+                    self.synchronize();
+                }
                 continue;
             };
             try result.statements.append(arena, decl);
@@ -110,7 +117,30 @@ pub const Parser = struct {
     }
 
     fn expression(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
-        return try self.equality(allocator);
+        return try self.assignment(allocator);
+    }
+
+    fn assignment(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+        const expr = try self.equality(allocator);
+
+        if (self.match(&[_]token.Type{token.Type.equal})) {
+            const equals = self.previous();
+            const value = try self.assignment(allocator);
+
+            if (@as(std.meta.Tag(ast.Expr), expr.*) == .variable) {
+                const new_expr = try allocator.create(ast.Expr);
+                new_expr.* = ast.Expr{ .assign = ast.Assignment{ .name = expr.variable, .value = value } };
+                return new_expr;
+            }
+
+            self.diagnostic = Diagnostic{
+                .found = equals,
+                .message = "invalid assignment target.",
+            };
+            return ParseError.InvalidAssignment;
+        }
+
+        return expr;
     }
 
     fn equality(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {

@@ -100,7 +100,7 @@ pub const Scanner = struct {
                 }
 
                 if (self.isAtEnd()) {
-                    main.reportError(self.line, &[_][]const u8{"Unterminated string."});
+                    main.reportError(self.line, &[_][]const u8{"Lex Errror: Unterminated string."});
                     return;
                 }
 
@@ -132,7 +132,7 @@ pub const Scanner = struct {
             },
             // Ignore whitespace.
             ' ', '\r', '\t' => {},
-            else => main.reportError(self.line, &[_][]const u8{"Unexpected character in input."}),
+            else => main.reportError(self.line, &[_][]const u8{"Lex Error: Unexpected character in input."}),
         }
     }
 

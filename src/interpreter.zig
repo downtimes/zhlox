@@ -2,6 +2,9 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const token = @import("token.zig");
 const enviroment = @import("environment.zig");
+const scanner = @import("scanner.zig");
+const parser = @import("parser.zig");
+const main = @import("main.zig");
 
 pub const Value = union(enum) {
     const Self = @This();
@@ -73,6 +76,7 @@ pub const Interpreter = struct {
     diagnostic: ?Diagonstic = null,
 
     pub fn deinit(self: *Self) void {
+        // TODO the global env does not own the values atm. We need to also free the values in the environment.
         self.global_env.deinit();
     }
 
@@ -86,7 +90,28 @@ pub const Interpreter = struct {
         return Interpreter{ .allocator = allocator, .global_env = env };
     }
 
-    pub fn execute(self: *Self, output: std.fs.File.Writer, statements: []ast.Stmt) RuntimError!void {
+    pub fn run(self: *Self, stdout: std.fs.File.Writer, input: []const u8) !void {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+
+        var scan = scanner.Scanner{ .source = input };
+        const tokens = try scan.scanTokens(arena.allocator());
+
+        var parse = parser.Parser{ .tokens = tokens.items };
+        const parse_tree = try parse.parseInto(arena.allocator());
+
+        self.execute(stdout, parse_tree.statements.items) catch |err| {
+            if (err == RuntimError.Unimplemented) {
+                _ = try stdout.write("Hit unimplemented part of the interpreter.");
+            } else {
+                const diagnostic = self.diagnostic.?;
+                main.reportError(diagnostic.token_.line, &[_][]const u8{ "Runtime Error:", diagnostic.token_.lexeme, " ", diagnostic.message });
+            }
+            return err;
+        };
+    }
+
+    fn execute(self: *Self, output: std.fs.File.Writer, statements: []ast.Stmt) RuntimError!void {
         for (statements) |stmt| {
             try self.executeStatement(output, stmt);
         }
@@ -117,7 +142,8 @@ pub const Interpreter = struct {
                 //      afterwards. Therefore we need do to seperate define calls here.
                 if (decl.initializer != null) {
                     const value = try self.evaluateExpression(decl.initializer.?.*);
-                    return try self.global_env.define(decl.name.lexeme, value);
+                    try self.global_env.define(decl.name.lexeme, value);
+                    return;
                 }
 
                 try self.global_env.define(decl.name.lexeme, Value.nil);
@@ -223,6 +249,7 @@ pub const Interpreter = struct {
                 return RuntimError.Unimplemented;
             },
             .variable => |variable| {
+                std.debug.print("Getting variable {s}", .{variable.lexeme});
                 const val = self.global_env.get(variable);
                 if (val == null) {
                     self.diagnostic = Diagonstic{
@@ -233,6 +260,24 @@ pub const Interpreter = struct {
                 }
 
                 return val.?;
+            },
+            .assign => |assignment| {
+                const value = try self.evaluateExpression(assignment.value.*);
+                self.global_env.assign(assignment.name, value) catch |err| {
+                    switch (err) {
+                        enviroment.EnvironmentError.VariableNotFound => {
+                            self.diagnostic = Diagonstic{
+                                .token_ = assignment.name,
+                                .message = "is an undefined variable.",
+                            };
+                            return RuntimError.UndefinedVariable;
+                        },
+                        enviroment.EnvironmentError.OutOfMemory => {
+                            return RuntimError.OutOfMemory;
+                        },
+                    }
+                };
+                return value;
             },
         }
 

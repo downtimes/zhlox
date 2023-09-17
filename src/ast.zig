@@ -20,17 +20,9 @@ pub const Literal = union(enum) {
     nil: void,
 };
 
-pub const Ast = struct {
-    const Self = @This();
-
-    arena: *std.heap.ArenaAllocator,
-    statements: std.ArrayListUnmanaged(Stmt),
-
-    pub fn deinit(self: Self) void {
-        const parent_alloc = self.arena.child_allocator;
-        self.arena.deinit();
-        parent_alloc.destroy(self.arena);
-    }
+pub const Assignment = struct {
+    name: token.Token,
+    value: *Expr,
 };
 
 pub const VariableDeclaration = struct {
@@ -50,6 +42,20 @@ pub const Expr = union(enum) {
     literal: Literal,
     unary: Unary,
     variable: token.Token,
+    assign: Assignment,
+};
+
+pub const Ast = struct {
+    const Self = @This();
+
+    arena: *std.heap.ArenaAllocator,
+    statements: std.ArrayListUnmanaged(Stmt),
+
+    pub fn deinit(self: Self) void {
+        const parent_alloc = self.arena.child_allocator;
+        self.arena.deinit();
+        parent_alloc.destroy(self.arena);
+    }
 };
 
 pub fn printExpr(expr: Expr, writer: anytype) void {
