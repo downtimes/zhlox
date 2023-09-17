@@ -86,17 +86,23 @@ pub const Diagonstic = struct {
 pub const Interpreter = struct {
     const Self = @This();
 
-    global_env: enviroment.Environment,
+    environments: std.ArrayListUnmanaged(enviroment.Environment),
     allocator: std.mem.Allocator,
+    current_environment: u16 = 0,
     diagnostic: ?Diagonstic = null,
 
     pub fn deinit(self: *Self) void {
-        self.global_env.deinit();
+        for (self.environments.items) |*env| {
+            env.deinit();
+        }
+        self.environments.deinit(self.allocator);
     }
 
     pub fn new(allocator: std.mem.Allocator) !Self {
         const env = try enviroment.Environment.init(allocator);
-        return Interpreter{ .allocator = allocator, .global_env = env };
+        var environments = try std.ArrayListUnmanaged(enviroment.Environment).initCapacity(allocator, 5);
+        environments.appendAssumeCapacity(env);
+        return Interpreter{ .allocator = allocator, .environments = environments };
     }
 
     pub fn run(self: *Self, stdout: std.fs.File.Writer, input: []const u8) !void {
@@ -146,18 +152,15 @@ pub const Interpreter = struct {
                 _ = try output.write("\n");
             },
             .var_decl => |decl| {
-                // TODO workaround for a compiler bug https://github.com/ziglang/zig/issues/10253
-                //      We want to initialize a variable to Value.nil, but when we do we can't change the type of value
-                //      afterwards. Therefore we need do to seperate define calls here.
-                if (decl.initializer != null) {
-                    var value = try self.evaluateExpression(decl.initializer.?.*);
-                    defer value.deinit(self.allocator);
+                var val: Value = Value.nil;
+                defer val.deinit(self.allocator);
 
-                    try self.global_env.define(decl.name.lexeme, value);
-                    return;
+                if (decl.initializer != null) {
+                    val = try self.evaluateExpression(decl.initializer.?.*);
                 }
 
-                try self.global_env.define(decl.name.lexeme, Value.nil);
+                var current_env = &self.environments.items[self.current_environment];
+                try current_env.define(decl.name.lexeme, Value.nil);
             },
         }
     }
@@ -256,7 +259,14 @@ pub const Interpreter = struct {
                 return RuntimError.Unimplemented;
             },
             .variable => |variable| {
-                const val = self.global_env.get(variable, self.allocator);
+                var environment_index = self.environments.items.len;
+                const val = found: while (environment_index > 0) {
+                    environment_index -= 1;
+                    const val = self.environments.items[environment_index].get(variable, self.allocator);
+                    if (val != null) {
+                        break :found val;
+                    }
+                } else null;
 
                 if (val == null) {
                     self.diagnostic = Diagonstic{
@@ -270,23 +280,33 @@ pub const Interpreter = struct {
             },
             .assign => |assignment| {
                 var value = try self.evaluateExpression(assignment.value.*);
-                defer value.deinit(self.allocator);
 
-                self.global_env.assign(assignment.name, value) catch |err| {
-                    switch (err) {
-                        enviroment.EnvironmentError.VariableNotFound => {
-                            self.diagnostic = Diagonstic{
-                                .token_ = assignment.name,
-                                .message = "is an undefined variable.",
-                            };
-                            return RuntimError.UndefinedVariable;
-                        },
-                        enviroment.EnvironmentError.OutOfMemory => {
-                            return RuntimError.OutOfMemory;
-                        },
-                    }
+                var environment_index = self.environments.items.len;
+                while (environment_index > 0) {
+                    environment_index -= 1;
+                    var current_environment = &self.environments.items[environment_index];
+                    current_environment.assign(assignment.name, value) catch |err| {
+                        switch (err) {
+                            // Go up one level in the environment chain.
+                            enviroment.EnvironmentError.VariableNotFound => {
+                                continue;
+                            },
+                            enviroment.EnvironmentError.OutOfMemory => {
+                                return RuntimError.OutOfMemory;
+                            },
+                        }
+                    };
+
+                    // Assignment was successfull so we can return the value
+                    return value;
+                }
+
+                // No assignment possible so we report an error.
+                self.diagnostic = Diagonstic{
+                    .token_ = assignment.name,
+                    .message = "is an undefined variable.",
                 };
-                return value;
+                return RuntimError.UndefinedVariable;
             },
         }
 

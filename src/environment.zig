@@ -4,8 +4,9 @@ const token = @import("token.zig");
 
 pub const EnvironmentError = error{ VariableNotFound, OutOfMemory };
 
-// TODO Not sure if the arena is the best allocation strategy here. If the Environment exists for a long time
-//      with many variables being introduced, this will waste a lot of memory.
+// TODO Not sure if the arena is the best allocation strategy here. If the Environment exists for a long time.
+//      Every time a string is changed or a new variable is introduced, the memory will be blocked for the lifetime.
+//      If we take the global environment that might be for years.
 pub const Environment = struct {
     const Self = @This();
 
