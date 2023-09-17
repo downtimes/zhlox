@@ -35,6 +35,8 @@ fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocat
             const diagnostic = interpret.diagnostic.?;
             reportError(diagnostic.token_.line, &[_][]const u8{ diagnostic.token_.lexeme, " ", diagnostic.message });
         }
+        // TODO possibly return an error value here to set a nonzero exit code when main exits to tell script
+        //      users in their shell that something went wrong.
         return;
     };
 

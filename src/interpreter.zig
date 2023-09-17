@@ -102,6 +102,9 @@ pub const Interpreter = struct {
                 if (@as(std.meta.Tag(Value), left) == .number and @as(std.meta.Tag(Value), right) == .number) {
                     switch (b.operator.type_) {
                         .minus => return Value{ .number = left.number - right.number },
+                        // TODO possibly create runtime error here when dividing by 0 when nominator not 0 itself,
+                        //      currently we return inf since zig does the same. Need to look into how other lox
+                        //      interpreters handle this case
                         .slash => return Value{ .number = left.number / right.number },
                         .star => return Value{ .number = left.number * right.number },
                         .plus => return Value{ .number = left.number + right.number },
