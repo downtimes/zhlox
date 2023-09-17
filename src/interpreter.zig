@@ -10,6 +10,13 @@ pub const Value = union(enum) {
     bool_: bool,
     nil: void,
 
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .string => |s| allocator.free(s),
+            else => {},
+        }
+    }
+
     // Strange rule according to Lex definition...
     fn isTruthy(self: Self) bool {
         switch (self) {
@@ -50,7 +57,7 @@ pub const Value = union(enum) {
     }
 };
 
-pub const RuntimError = error{ MinusOperand, IllegalBinaryOperand, Unimplemented };
+pub const RuntimError = error{ MinusOperand, IllegalBinaryOperand, Unimplemented, OutOfMemory };
 
 pub const Diagonstic = struct {
     token_: token.Token, // Associated token to get the operation and the line number.
@@ -60,6 +67,7 @@ pub const Diagonstic = struct {
 pub const Interpreter = struct {
     const Self = @This();
 
+    allocator: std.mem.Allocator,
     diagnostic: ?Diagonstic = null,
 
     pub fn execute(self: *Self, expr: ast.Expr) RuntimError!Value {
@@ -68,7 +76,11 @@ pub const Interpreter = struct {
                 return switch (l) {
                     .bool_ => |b| Value{ .bool_ = b },
                     .number => |n| Value{ .number = n },
-                    .string => |s| Value{ .string = s },
+                    .string => |s| blk: {
+                        var owned_string = try self.allocator.alloc(u8, s.len);
+                        std.mem.copyForwards(u8, owned_string, s);
+                        break :blk Value{ .string = owned_string };
+                    },
                     .nil => Value.nil,
                 };
             },
@@ -77,6 +89,7 @@ pub const Interpreter = struct {
             },
             .unary => |u| {
                 const right = try self.execute(u.right.*);
+                errdefer right.deinit(self.allocator);
 
                 if (u.operator.type_ == token.Type.bang) {
                     return Value{ .bool_ = !right.isTruthy() };
@@ -96,8 +109,10 @@ pub const Interpreter = struct {
                 return RuntimError.Unimplemented;
             },
             .binary => |b| {
-                const left = try self.execute(b.left.*);
-                const right = try self.execute(b.right.*);
+                var left = try self.execute(b.left.*);
+                var right = try self.execute(b.right.*);
+                errdefer left.deinit(self.allocator);
+                errdefer right.deinit(self.allocator);
 
                 if (@as(std.meta.Tag(Value), left) == .number and @as(std.meta.Tag(Value), right) == .number) {
                     switch (b.operator.type_) {
@@ -120,8 +135,11 @@ pub const Interpreter = struct {
 
                 if (@as(std.meta.Tag(Value), left) == .string and @as(std.meta.Tag(Value), right) == .string) {
                     if (b.operator.type_ == .plus) {
-                        // TODO handle string concatenation. We either need to copy all slices to be owned by us or we
-                        //      need to do a copy on concat and handle concatenated strings and strings from input differently.
+                        defer left.deinit(self.allocator);
+                        defer right.deinit(self.allocator);
+
+                        const combined = try std.mem.concat(self.allocator, u8, &[_][]const u8{ left.string, right.string });
+                        return Value{ .string = combined };
                     }
                 }
 

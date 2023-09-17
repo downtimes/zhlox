@@ -30,10 +30,10 @@ pub const Scanner = struct {
     current: u32 = 0,
     line: u32 = 1,
     source: []const u8,
-    allocator: std.mem.Allocator,
 
-    pub fn scanTokens(self: *Self) !Return {
-        var tokens = Return.init(self.allocator);
+    pub fn scanTokens(self: *Self, allocator: std.mem.Allocator) !Return {
+        var tokens = Return.init(allocator);
+        errdefer tokens.deinit();
 
         while (!self.isAtEnd()) {
             self.start_of_lexeme = self.current;
@@ -132,8 +132,6 @@ pub const Scanner = struct {
             },
             // Ignore whitespace.
             ' ', '\r', '\t' => {},
-            // TODO scan all the invalid characters until the next valid one and report the range instead of each
-            //      character.
             else => main.reportError(self.line, &[_][]const u8{"Unexpected character in input."}),
         }
     }

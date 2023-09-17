@@ -15,20 +15,21 @@ pub fn reportError(line: u32, messages: []const []const u8) void {
 }
 
 fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocator) !void {
-    var lexer = scanner.Scanner{ .source = input, .allocator = allocator };
-    const tokens = try lexer.scanTokens();
-    defer tokens.deinit();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
 
-    var p = parser.Parser{ .tokens = tokens.items, .allocator = allocator };
-    const expr = p.expression() catch {
-        const diagnostic = p.diagnostic.?;
+    var lexer = scanner.Scanner{ .source = input };
+    const tokens = try lexer.scanTokens(arena.allocator());
+
+    var parse = parser.Parser{ .tokens = tokens.items, .allocator = arena.allocator() };
+    const expr = parse.expression() catch {
+        const diagnostic = parse.diagnostic.?;
         reportError(diagnostic.found.line, &[_][]const u8{ "found ", diagnostic.found.lexeme, "; ", diagnostic.message });
         return;
     };
-    defer expr.destroySelf(allocator);
-    var interpret = interpreter.Interpreter{};
+    var interpret = interpreter.Interpreter{ .allocator = allocator };
 
-    const value = interpret.execute(expr.*) catch |err| {
+    var value = interpret.execute(expr.*) catch |err| {
         if (err == interpreter.RuntimError.Unimplemented) {
             _ = try stdout.write("Hit unimplemented part of the interpreter.");
         } else {
@@ -39,6 +40,7 @@ fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocat
         //      users in their shell that something went wrong.
         return;
     };
+    defer value.deinit(allocator);
 
     switch (value) {
         .number => |n| try stdout.print("{d}", .{n}),
