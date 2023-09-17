@@ -88,7 +88,6 @@ pub const Interpreter = struct {
 
     environments: std.ArrayListUnmanaged(enviroment.Environment),
     allocator: std.mem.Allocator,
-    current_environment: u16 = 0,
     diagnostic: ?Diagonstic = null,
 
     pub fn deinit(self: *Self) void {
@@ -159,8 +158,23 @@ pub const Interpreter = struct {
                     val = try self.evaluateExpression(decl.initializer.?.*);
                 }
 
-                var current_env = &self.environments.items[self.current_environment];
-                try current_env.define(decl.name.lexeme, Value.nil);
+                var current_env = &self.environments.items[self.environments.items.len - 1];
+                try current_env.define(decl.name.lexeme, val);
+            },
+            .block => |statements| {
+                // Open new environment for each nested block.
+                const new_env = try enviroment.Environment.init(self.allocator);
+                try self.environments.append(self.allocator, new_env);
+
+                // Get back to the parent environment as soon as we are done with the block.
+                defer {
+                    var used_env = self.environments.pop();
+                    used_env.deinit();
+                }
+
+                for (statements.items) |statement| {
+                    try self.executeStatement(output, statement);
+                }
             },
         }
     }

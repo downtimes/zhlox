@@ -34,6 +34,7 @@ pub const Stmt = union(enum) {
     expr: *Expr,
     print: *Expr,
     var_decl: VariableDeclaration,
+    block: std.ArrayListUnmanaged(Stmt),
 };
 
 pub const Expr = union(enum) {

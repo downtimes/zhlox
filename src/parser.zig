@@ -73,10 +73,10 @@ pub const Parser = struct {
 
     fn declaration(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
         if (self.match(&[_]token.Type{token.Type.var_})) {
-            return try self.variableDeclaration(allocator);
+            return self.variableDeclaration(allocator);
         }
 
-        return try self.statement(allocator);
+        return self.statement(allocator);
     }
 
     fn variableDeclaration(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
@@ -93,9 +93,24 @@ pub const Parser = struct {
     }
 
     fn statement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
-        if (self.match(&[_]token.Type{token.Type.print})) return try self.printStatement(allocator);
+        if (self.match(&[_]token.Type{token.Type.print})) return self.printStatement(allocator);
+        if (self.match(&[_]token.Type{token.Type.left_brace})) {
+            return ast.Stmt{ .block = try self.block(allocator) };
+        }
 
-        return try self.expressionStatement(allocator);
+        return self.expressionStatement(allocator);
+    }
+
+    fn block(self: *Self, allocator: std.mem.Allocator) ParseError!std.ArrayListUnmanaged(ast.Stmt) {
+        var statements = std.ArrayListUnmanaged(ast.Stmt){};
+
+        while (!self.check(token.Type.right_brace) and !self.isAtEnd()) {
+            const decl = try self.declaration(allocator);
+            try statements.append(allocator, decl);
+        }
+
+        try self.consume(token.Type.right_brace, "Expected '}' at the end of a block.");
+        return statements;
     }
 
     fn printStatement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
@@ -111,7 +126,7 @@ pub const Parser = struct {
     }
 
     fn expression(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
-        return try self.assignment(allocator);
+        return self.assignment(allocator);
     }
 
     fn assignment(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
@@ -203,7 +218,7 @@ pub const Parser = struct {
             return new_expr;
         }
 
-        return try self.primary(allocator);
+        return self.primary(allocator);
     }
 
     fn primary(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
