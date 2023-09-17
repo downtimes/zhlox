@@ -30,8 +30,7 @@ pub const Environment = struct {
     pub fn define(self: *Self, name: []const u8, value: interpreter.Value) !void {
         const allocator = self.arena.allocator();
 
-        const owned_str = try allocator.alloc(u8, name.len);
-        std.mem.copyForwards(u8, owned_str, name);
+        const owned_str = try allocator.dupe(u8, name);
 
         const owned_value = try allocator.create(interpreter.Value);
         owned_value.* = try value.deepCopy(allocator);

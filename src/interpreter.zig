@@ -28,8 +28,7 @@ pub const Value = union(enum) {
 
         switch (self) {
             .string => |s| {
-                const new_str = try allocator.alloc(u8, s.len);
-                std.mem.copyForwards(u8, new_str, s);
+                const new_str = try allocator.dupe(u8, s);
                 result.string = new_str;
             },
             else => {},
@@ -170,8 +169,7 @@ pub const Interpreter = struct {
                     .bool_ => |b| Value{ .bool_ = b },
                     .number => |n| Value{ .number = n },
                     .string => |s| blk: {
-                        var owned_string = try self.allocator.alloc(u8, s.len);
-                        std.mem.copyForwards(u8, owned_string, s);
+                        var owned_string = try self.allocator.dupe(u8, s);
                         break :blk Value{ .string = owned_string };
                     },
                     .nil => Value.nil,
