@@ -31,7 +31,7 @@ fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocat
     };
     var interpret = interpreter.Interpreter{ .allocator = allocator };
 
-    var value = interpret.execute(parse_tree.expr) catch |err| {
+    interpret.execute(stdout, parse_tree.statements.items) catch |err| {
         if (err == interpreter.RuntimError.Unimplemented) {
             _ = try stdout.write("Hit unimplemented part of the interpreter.");
         } else {
@@ -42,16 +42,6 @@ fn run(stdout: std.fs.File.Writer, input: []const u8, allocator: std.mem.Allocat
         //      users in their shell that something went wrong.
         return;
     };
-    defer value.deinit(allocator);
-
-    switch (value) {
-        .number => |n| try stdout.print("{d}", .{n}),
-        .string => |s| try stdout.print("{s}", .{s}),
-        .bool_ => |b| try stdout.print("{}", .{b}),
-        .nil => _ = try stdout.write("nil"),
-    }
-
-    _ = try stdout.write("\n");
 }
 
 fn runRepl(allocator: std.mem.Allocator) !void {
@@ -76,6 +66,7 @@ fn runFile(path: [:0]const u8, allocator: std.mem.Allocator) !void {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
     const bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    defer allocator.free(bytes);
     try run(std.io.getStdOut().writer(), bytes, allocator);
 }
 

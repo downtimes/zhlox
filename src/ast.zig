@@ -24,13 +24,18 @@ pub const Ast = struct {
     const Self = @This();
 
     arena: *std.heap.ArenaAllocator,
-    expr: Expr,
+    statements: std.ArrayListUnmanaged(Stmt),
 
     pub fn deinit(self: Self) void {
         const parent_alloc = self.arena.child_allocator;
         self.arena.deinit();
         parent_alloc.destroy(self.arena);
     }
+};
+
+pub const Stmt = union(enum) {
+    expr: *Expr,
+    print: *Expr,
 };
 
 pub const Expr = union(enum) {

@@ -36,14 +36,36 @@ pub const Parser = struct {
     pub fn parseInto(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Ast {
         var result = ast.Ast{
             .arena = try allocator.create(std.heap.ArenaAllocator),
-            .expr = undefined,
+            .statements = std.ArrayListUnmanaged(ast.Stmt){},
         };
         errdefer allocator.destroy(result.arena);
         result.arena.* = std.heap.ArenaAllocator.init(allocator);
         errdefer result.arena.deinit();
+        var arena = result.arena.allocator();
 
-        result.expr = (try self.expression(result.arena.allocator())).*;
+        while (!self.isAtEnd()) {
+            try result.statements.append(arena, try self.statement(arena));
+        }
+
         return result;
+    }
+
+    fn statement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+        if (self.match(&[_]token.Type{token.Type.print})) return try self.printStatement(allocator);
+
+        return try self.expressionStatement(allocator);
+    }
+
+    fn printStatement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+        const value = try self.expression(allocator);
+        try self.consume(token.Type.semicolon, "Expected ';' after value.");
+        return ast.Stmt{ .print = value };
+    }
+
+    fn expressionStatement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+        const expr = try self.expression(allocator);
+        try self.consume(token.Type.semicolon, "Expected ';' after expression.");
+        return ast.Stmt{ .expr = expr };
     }
 
     fn expression(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {

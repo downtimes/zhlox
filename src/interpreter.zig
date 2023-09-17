@@ -57,7 +57,7 @@ pub const Value = union(enum) {
     }
 };
 
-pub const RuntimError = error{ MinusOperand, IllegalBinaryOperand, Unimplemented, OutOfMemory };
+pub const RuntimError = error{ MinusOperand, IllegalBinaryOperand, Unimplemented, OutOfMemory } || std.fs.File.WriteError;
 
 pub const Diagonstic = struct {
     token_: token.Token, // Associated token to get the operation and the line number.
@@ -70,7 +70,35 @@ pub const Interpreter = struct {
     allocator: std.mem.Allocator,
     diagnostic: ?Diagonstic = null,
 
-    pub fn execute(self: *Self, expr: ast.Expr) RuntimError!Value {
+    pub fn execute(self: *Self, output: std.fs.File.Writer, statements: []ast.Stmt) RuntimError!void {
+        for (statements) |stmt| {
+            try self.executeStatement(output, stmt);
+        }
+    }
+
+    fn executeStatement(self: *Self, output: std.fs.File.Writer, stmt: ast.Stmt) RuntimError!void {
+        switch (stmt) {
+            .expr => |e| {
+                var value = try self.evaluateExpression(e.*);
+                value.deinit(self.allocator);
+            },
+            .print => |e| {
+                // TODO do I want to propagate print errors upwards?
+                var value = try self.evaluateExpression(e.*);
+                defer value.deinit(self.allocator);
+
+                switch (value) {
+                    .number => |n| try output.print("{d}", .{n}),
+                    .string => |s| try output.print("{s}", .{s}),
+                    .bool_ => |b| try output.print("{}", .{b}),
+                    .nil => _ = try output.write("nil"),
+                }
+                _ = try output.write("\n");
+            },
+        }
+    }
+
+    fn evaluateExpression(self: *Self, expr: ast.Expr) RuntimError!Value {
         switch (expr) {
             .literal => |l| {
                 return switch (l) {
@@ -85,10 +113,10 @@ pub const Interpreter = struct {
                 };
             },
             .grouping => |g| {
-                return try self.execute(g.*);
+                return try self.evaluateExpression(g.*);
             },
             .unary => |u| {
-                var right = try self.execute(u.right.*);
+                var right = try self.evaluateExpression(u.right.*);
                 errdefer right.deinit(self.allocator);
 
                 if (u.operator.type_ == token.Type.bang) {
@@ -109,8 +137,8 @@ pub const Interpreter = struct {
                 return RuntimError.Unimplemented;
             },
             .binary => |b| {
-                var left = try self.execute(b.left.*);
-                var right = try self.execute(b.right.*);
+                var left = try self.evaluateExpression(b.left.*);
+                var right = try self.evaluateExpression(b.right.*);
                 errdefer left.deinit(self.allocator);
                 errdefer right.deinit(self.allocator);
 
