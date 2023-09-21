@@ -42,10 +42,16 @@ pub const Logical = struct {
     right: *Expr,
 };
 
+pub const WhileStmt = struct {
+    condition: *Expr,
+    body: *Stmt,
+};
+
 pub const Stmt = union(enum) {
     expr: *Expr,
     cond: Conditional,
     print: *Expr,
+    while_: WhileStmt,
     var_decl: VariableDeclaration,
     block: std.ArrayListUnmanaged(Stmt),
 };

@@ -159,6 +159,16 @@ pub const Interpreter = struct {
                 }
                 _ = try output.write("\n");
             },
+            .while_ => |w| {
+                var cond = try self.evaluateExpression(w.condition.*);
+                defer cond.deinit(self.allocator);
+
+                while (cond.isTruthy()) {
+                    try self.executeStatement(output, w.body.*);
+                    cond.deinit(self.allocator);
+                    cond = try self.evaluateExpression(w.condition.*);
+                }
+            },
             .var_decl => |decl| {
                 var val: Value = Value.nil;
                 defer val.deinit(self.allocator);

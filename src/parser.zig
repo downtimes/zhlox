@@ -12,6 +12,8 @@ pub const Diagnostic = struct {
 
 pub const Parser = struct {
     const Self = @This();
+    const Stmt = ParseError!ast.Stmt;
+    const Expr = ParseError!*ast.Expr;
 
     tokens: []token.Token,
     current: u32 = 0,
@@ -71,7 +73,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn declaration(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+    fn declaration(self: *Self, allocator: std.mem.Allocator) Stmt {
         if (self.match(&[_]token.Type{token.Type.var_})) {
             return self.variableDeclaration(allocator);
         }
@@ -79,7 +81,7 @@ pub const Parser = struct {
         return self.statement(allocator);
     }
 
-    fn variableDeclaration(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+    fn variableDeclaration(self: *Self, allocator: std.mem.Allocator) Stmt {
         try self.consume(token.Type.identifier, "Expected variable name.");
         const name = self.previous();
 
@@ -92,9 +94,10 @@ pub const Parser = struct {
         return ast.Stmt{ .var_decl = ast.VariableDeclaration{ .name = name, .initializer = initializer } };
     }
 
-    fn statement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+    fn statement(self: *Self, allocator: std.mem.Allocator) Stmt {
         if (self.match(&[_]token.Type{token.Type.if_})) return self.ifStatement(allocator);
         if (self.match(&[_]token.Type{token.Type.print})) return self.printStatement(allocator);
+        if (self.match(&[_]token.Type{token.Type.while_})) return self.whileStatement(allocator);
         if (self.match(&[_]token.Type{token.Type.left_brace})) {
             return ast.Stmt{ .block = try self.block(allocator) };
         }
@@ -102,7 +105,7 @@ pub const Parser = struct {
         return self.expressionStatement(allocator);
     }
 
-    fn ifStatement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+    fn ifStatement(self: *Self, allocator: std.mem.Allocator) Stmt {
         try self.consume(token.Type.left_paren, "Expected '(' after 'if.'");
         const condition = try self.expression(allocator);
         try self.consume(token.Type.right_paren, "Expected ')' after the if condition.");
@@ -130,23 +133,33 @@ pub const Parser = struct {
         return statements;
     }
 
-    fn printStatement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+    fn printStatement(self: *Self, allocator: std.mem.Allocator) Stmt {
         const value = try self.expression(allocator);
         try self.consume(token.Type.semicolon, "Expected ';' after value.");
         return ast.Stmt{ .print = value };
     }
 
-    fn expressionStatement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+    fn whileStatement(self: *Self, allocator: std.mem.Allocator) Stmt {
+        try self.consume(token.Type.left_paren, "Expected '(' after 'while'.");
+        const cond = try self.expression(allocator);
+        try self.consume(token.Type.right_paren, "Expected ')' after while condition.");
+        var stmt = try allocator.create(ast.Stmt);
+        stmt.* = try self.statement(allocator);
+
+        return ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = stmt } };
+    }
+
+    fn expressionStatement(self: *Self, allocator: std.mem.Allocator) Stmt {
         const expr = try self.expression(allocator);
         try self.consume(token.Type.semicolon, "Expected ';' after expression.");
         return ast.Stmt{ .expr = expr };
     }
 
-    fn expression(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+    fn expression(self: *Self, allocator: std.mem.Allocator) Expr {
         return self.assignment(allocator);
     }
 
-    fn assignment(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+    fn assignment(self: *Self, allocator: std.mem.Allocator) Expr {
         const expr = try self.logicalOr(allocator);
 
         if (self.match(&[_]token.Type{token.Type.equal})) {
@@ -169,7 +182,7 @@ pub const Parser = struct {
         return expr;
     }
 
-    fn logicalOr(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+    fn logicalOr(self: *Self, allocator: std.mem.Allocator) Expr {
         var result = try self.logicalAnd(allocator);
 
         while (self.match(&[_]token.Type{token.Type.or_})) {
@@ -182,7 +195,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn logicalAnd(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+    fn logicalAnd(self: *Self, allocator: std.mem.Allocator) Expr {
         var result = try self.equality(allocator);
 
         while (self.match(&[_]token.Type{token.Type.and_})) {
@@ -195,7 +208,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn equality(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+    fn equality(self: *Self, allocator: std.mem.Allocator) Expr {
         var result = try self.comparison(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.bang_equal, token.Type.equal_equal })) {
@@ -209,7 +222,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn comparison(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+    fn comparison(self: *Self, allocator: std.mem.Allocator) Expr {
         var result = try self.term(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.greater, token.Type.gerater_equal, token.Type.less, token.Type.less_equal })) {
@@ -223,7 +236,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn term(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+    fn term(self: *Self, allocator: std.mem.Allocator) Expr {
         var result = try self.factor(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.minus, token.Type.plus })) {
@@ -237,7 +250,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn factor(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+    fn factor(self: *Self, allocator: std.mem.Allocator) Expr {
         var result = try self.unary(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.slash, token.Type.star })) {
@@ -251,7 +264,7 @@ pub const Parser = struct {
         return result;
     }
 
-    fn unary(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+    fn unary(self: *Self, allocator: std.mem.Allocator) Expr {
         if (self.match(&[_]token.Type{ token.Type.bang, token.Type.minus })) {
             const operator = self.previous();
             const right = try self.unary(allocator);
@@ -264,7 +277,7 @@ pub const Parser = struct {
         return self.primary(allocator);
     }
 
-    fn primary(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+    fn primary(self: *Self, allocator: std.mem.Allocator) Expr {
         if (self.match(&[_]token.Type{token.Type.false})) {
             const new_expr = try allocator.create(ast.Expr);
             new_expr.* = ast.Expr{ .literal = ast.Literal{ .bool_ = false } };
