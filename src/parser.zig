@@ -95,6 +95,7 @@ pub const Parser = struct {
     }
 
     fn statement(self: *Self, allocator: std.mem.Allocator) Stmt {
+        if (self.match(&[_]token.Type{token.Type.for_})) return self.forStatement(allocator);
         if (self.match(&[_]token.Type{token.Type.if_})) return self.ifStatement(allocator);
         if (self.match(&[_]token.Type{token.Type.print})) return self.printStatement(allocator);
         if (self.match(&[_]token.Type{token.Type.while_})) return self.whileStatement(allocator);
@@ -139,11 +140,61 @@ pub const Parser = struct {
         return ast.Stmt{ .print = value };
     }
 
+    fn forStatement(self: *Self, allocator: std.mem.Allocator) Stmt {
+        try self.consume(token.Type.left_paren, "Exppected '(' after 'for'.");
+
+        var init: ?ast.Stmt = null;
+        if (self.match(&[_]token.Type{token.Type.semicolon})) {
+            // Already null
+        } else if (self.match(&[_]token.Type{token.Type.var_})) {
+            init = try self.variableDeclaration(allocator);
+        } else {
+            init = try self.expressionStatement(allocator);
+        }
+
+        var cond: ?*ast.Expr = null;
+        if (!self.check(token.Type.semicolon)) {
+            cond = try self.expression(allocator);
+        }
+        try self.consume(token.Type.semicolon, "Expected ';' after loop condition.");
+
+        var after: ?*ast.Expr = null;
+        if (!self.check(token.Type.right_paren)) {
+            after = try self.expression(allocator);
+        }
+        try self.consume(token.Type.right_paren, "Expected ')' after for clause.");
+
+        var body = try self.statement(allocator);
+
+        if (after != null) {
+            var sugar = std.ArrayListUnmanaged(ast.Stmt){};
+            try sugar.append(allocator, body);
+            try sugar.append(allocator, ast.Stmt{ .expr = after.? });
+            body = ast.Stmt{ .block = sugar };
+        }
+
+        if (cond == null) {
+            cond.?.* = ast.Expr{ .literal = ast.Literal{ .bool_ = true } };
+        }
+        const old_body = try allocator.create(ast.Stmt);
+        old_body.* = body;
+        body = ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond.?, .body = old_body } };
+
+        if (init != null) {
+            var sugar = std.ArrayListUnmanaged(ast.Stmt){};
+            try sugar.append(allocator, init.?);
+            try sugar.append(allocator, body);
+            body = ast.Stmt{ .block = sugar };
+        }
+
+        return body;
+    }
+
     fn whileStatement(self: *Self, allocator: std.mem.Allocator) Stmt {
         try self.consume(token.Type.left_paren, "Expected '(' after 'while'.");
         const cond = try self.expression(allocator);
         try self.consume(token.Type.right_paren, "Expected ')' after while condition.");
-        var stmt = try allocator.create(ast.Stmt);
+        const stmt = try allocator.create(ast.Stmt);
         stmt.* = try self.statement(allocator);
 
         return ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = stmt } };
