@@ -93,12 +93,29 @@ pub const Parser = struct {
     }
 
     fn statement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+        if (self.match(&[_]token.Type{token.Type.if_})) return self.ifStatement(allocator);
         if (self.match(&[_]token.Type{token.Type.print})) return self.printStatement(allocator);
         if (self.match(&[_]token.Type{token.Type.left_brace})) {
             return ast.Stmt{ .block = try self.block(allocator) };
         }
 
         return self.expressionStatement(allocator);
+    }
+
+    fn ifStatement(self: *Self, allocator: std.mem.Allocator) ParseError!ast.Stmt {
+        try self.consume(token.Type.left_paren, "Expected '(' after 'if.'");
+        const condition = try self.expression(allocator);
+        try self.consume(token.Type.right_paren, "Expected ')' after the if condition.");
+
+        var then = try allocator.create(ast.Stmt);
+        then.* = try self.statement(allocator);
+        var els: ?*ast.Stmt = null;
+        if (self.match(&[_]token.Type{token.Type.else_})) {
+            els = try allocator.create(ast.Stmt);
+            els.?.* = try self.statement(allocator);
+        }
+
+        return ast.Stmt{ .cond = ast.Conditional{ .condition = condition, .then = then, .els = els } };
     }
 
     fn block(self: *Self, allocator: std.mem.Allocator) ParseError!std.ArrayListUnmanaged(ast.Stmt) {

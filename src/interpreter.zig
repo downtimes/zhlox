@@ -133,6 +133,15 @@ pub const Interpreter = struct {
 
     fn executeStatement(self: *Self, output: std.fs.File.Writer, stmt: ast.Stmt) RuntimError!void {
         switch (stmt) {
+            .cond => |condition| {
+                var cond = try self.evaluateExpression(condition.condition.*);
+                defer cond.deinit(self.allocator);
+                if (cond.isTruthy()) {
+                    try self.executeStatement(output, condition.then.*);
+                } else if (condition.els != null) {
+                    try self.executeStatement(output, condition.els.?.*);
+                }
+            },
             .expr => |e| {
                 var value = try self.evaluateExpression(e.*);
                 defer value.deinit(self.allocator);

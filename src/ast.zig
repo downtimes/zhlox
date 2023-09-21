@@ -30,8 +30,15 @@ pub const VariableDeclaration = struct {
     initializer: ?*Expr,
 };
 
+pub const Conditional = struct {
+    condition: *Expr,
+    then: *Stmt,
+    els: ?*Stmt,
+};
+
 pub const Stmt = union(enum) {
     expr: *Expr,
+    cond: Conditional,
     print: *Expr,
     var_decl: VariableDeclaration,
     block: std.ArrayListUnmanaged(Stmt),
