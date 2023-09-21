@@ -133,13 +133,13 @@ pub const Interpreter = struct {
 
     fn executeStatement(self: *Self, output: std.fs.File.Writer, stmt: ast.Stmt) RuntimError!void {
         switch (stmt) {
-            .cond => |condition| {
-                var cond = try self.evaluateExpression(condition.condition.*);
+            .cond => |c| {
+                var cond = try self.evaluateExpression(c.condition.*);
                 defer cond.deinit(self.allocator);
                 if (cond.isTruthy()) {
-                    try self.executeStatement(output, condition.then.*);
-                } else if (condition.els != null) {
-                    try self.executeStatement(output, condition.els.?.*);
+                    try self.executeStatement(output, c.then.*);
+                } else if (c.els != null) {
+                    try self.executeStatement(output, c.els.?.*);
                 }
             },
             .expr => |e| {
@@ -203,6 +203,17 @@ pub const Interpreter = struct {
             },
             .grouping => |g| {
                 return self.evaluateExpression(g.*);
+            },
+            .logical => |l| {
+                const left = try self.evaluateExpression(l.left.*);
+
+                if (l.operator.type_ == token.Type.and_) {
+                    if (!left.isTruthy()) return left;
+                } else {
+                    if (left.isTruthy()) return left;
+                }
+
+                return self.evaluateExpression(l.right.*);
             },
             .unary => |u| {
                 var right = try self.evaluateExpression(u.right.*);

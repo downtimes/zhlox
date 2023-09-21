@@ -147,7 +147,7 @@ pub const Parser = struct {
     }
 
     fn assignment(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
-        const expr = try self.equality(allocator);
+        const expr = try self.logicalOr(allocator);
 
         if (self.match(&[_]token.Type{token.Type.equal})) {
             const equals = self.previous();
@@ -167,6 +167,32 @@ pub const Parser = struct {
         }
 
         return expr;
+    }
+
+    fn logicalOr(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+        var result = try self.logicalAnd(allocator);
+
+        while (self.match(&[_]token.Type{token.Type.or_})) {
+            const operator = self.previous();
+            const right = try self.logicalAnd(allocator);
+            const new_epxr = try allocator.create(ast.Expr);
+            new_epxr.* = ast.Expr{ .logical = ast.Logical{ .left = result, .operator = operator, .right = right } };
+            result = new_epxr;
+        }
+        return result;
+    }
+
+    fn logicalAnd(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {
+        var result = try self.equality(allocator);
+
+        while (self.match(&[_]token.Type{token.Type.and_})) {
+            const operator = self.previous();
+            const right = try self.equality(allocator);
+            const new_epxr = try allocator.create(ast.Expr);
+            new_epxr.* = ast.Expr{ .logical = ast.Logical{ .left = result, .operator = operator, .right = right } };
+            result = new_epxr;
+        }
+        return result;
     }
 
     fn equality(self: *Self, allocator: std.mem.Allocator) ParseError!*ast.Expr {

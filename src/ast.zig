@@ -36,6 +36,12 @@ pub const Conditional = struct {
     els: ?*Stmt,
 };
 
+pub const Logical = struct {
+    left: *Expr,
+    operator: token.Token,
+    right: *Expr,
+};
+
 pub const Stmt = union(enum) {
     expr: *Expr,
     cond: Conditional,
@@ -48,6 +54,7 @@ pub const Expr = union(enum) {
     binary: Binary,
     grouping: *Expr,
     literal: Literal,
+    logical: Logical,
     unary: Unary,
     variable: token.Token,
     assign: Assignment,
