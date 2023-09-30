@@ -83,7 +83,7 @@ pub const Parser = struct {
 
     fn variableDeclaration(self: *Self, allocator: std.mem.Allocator) Stmt {
         try self.consume(token.Type.identifier, "Expected variable name.");
-        const name = try self.previous().deepCopy(allocator);
+        const name = try self.previous().clone(allocator);
 
         var initializer: ?*ast.Expr = null;
         if (self.match(&[_]token.Type{token.Type.equal})) {
@@ -214,7 +214,7 @@ pub const Parser = struct {
         const expr = try self.logicalOr(allocator);
 
         if (self.match(&[_]token.Type{token.Type.equal})) {
-            const equals = try self.previous().deepCopy(allocator);
+            const equals = try self.previous().clone(allocator);
             const value = try self.assignment(allocator);
 
             if (@as(std.meta.Tag(ast.Expr), expr.*) == .variable) {
@@ -237,7 +237,7 @@ pub const Parser = struct {
         var result = try self.logicalAnd(allocator);
 
         while (self.match(&[_]token.Type{token.Type.or_})) {
-            const operator = try self.previous().deepCopy(allocator);
+            const operator = try self.previous().clone(allocator);
             const right = try self.logicalAnd(allocator);
             const new_epxr = try allocator.create(ast.Expr);
             new_epxr.* = ast.Expr{ .logical = ast.Logical{ .left = result, .operator = operator, .right = right } };
@@ -250,7 +250,7 @@ pub const Parser = struct {
         var result = try self.equality(allocator);
 
         while (self.match(&[_]token.Type{token.Type.and_})) {
-            const operator = try self.previous().deepCopy(allocator);
+            const operator = try self.previous().clone(allocator);
             const right = try self.equality(allocator);
             const new_epxr = try allocator.create(ast.Expr);
             new_epxr.* = ast.Expr{ .logical = ast.Logical{ .left = result, .operator = operator, .right = right } };
@@ -263,7 +263,7 @@ pub const Parser = struct {
         var result = try self.comparison(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.bang_equal, token.Type.equal_equal })) {
-            const operator = try self.previous().deepCopy(allocator);
+            const operator = try self.previous().clone(allocator);
             const right = try self.comparison(allocator);
 
             const new_expr = try allocator.create(ast.Expr);
@@ -277,7 +277,7 @@ pub const Parser = struct {
         var result = try self.term(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.greater, token.Type.gerater_equal, token.Type.less, token.Type.less_equal })) {
-            const operator = try self.previous().deepCopy(allocator);
+            const operator = try self.previous().clone(allocator);
             const right = try self.term(allocator);
 
             const new_expr = try allocator.create(ast.Expr);
@@ -291,7 +291,7 @@ pub const Parser = struct {
         var result = try self.factor(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.minus, token.Type.plus })) {
-            const operator = try self.previous().deepCopy(allocator);
+            const operator = try self.previous().clone(allocator);
             const right = try self.factor(allocator);
 
             const new_expr = try allocator.create(ast.Expr);
@@ -305,7 +305,7 @@ pub const Parser = struct {
         var result = try self.unary(allocator);
 
         while (self.match(&[_]token.Type{ token.Type.slash, token.Type.star })) {
-            const operator = try self.previous().deepCopy(allocator);
+            const operator = try self.previous().clone(allocator);
             const right = try self.unary(allocator);
 
             const new_expr = try allocator.create(ast.Expr);
@@ -317,7 +317,7 @@ pub const Parser = struct {
 
     fn unary(self: *Self, allocator: std.mem.Allocator) Expr {
         if (self.match(&[_]token.Type{ token.Type.bang, token.Type.minus })) {
-            const operator = try self.previous().deepCopy(allocator);
+            const operator = try self.previous().clone(allocator);
             const right = try self.unary(allocator);
 
             const new_expr = try allocator.create(ast.Expr);
@@ -358,7 +358,7 @@ pub const Parser = struct {
 
         if (self.match(&[_]token.Type{token.Type.identifier})) {
             const new_expr = try allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .variable = try self.previous().deepCopy(allocator) };
+            new_expr.* = ast.Expr{ .variable = try self.previous().clone(allocator) };
             return new_expr;
         }
 

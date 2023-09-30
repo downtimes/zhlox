@@ -21,7 +21,7 @@ pub const Environment = struct {
     pub fn deinit(self: *Self) void {
         var iter = self.values.iterator();
         while (iter.next()) |elem| {
-            self.allocator.free(elem.key_ptr);
+            self.allocator.free(elem.key_ptr.*);
             elem.value_ptr.*.deinit(self.allocator);
         }
         self.values.deinit(self.allocator);
@@ -30,14 +30,14 @@ pub const Environment = struct {
     pub fn define(self: *Self, name: []const u8, value: interpreter.Value) !void {
         const owned_str = try self.allocator.dupe(u8, name);
         errdefer self.allocator.free(owned_str);
-        const owned_value = try value.deepCopy(self.allocator);
-        errdefer value.deinit(self.allocator);
+        var owned_value = try value.clone(self.allocator);
+        errdefer owned_value.deinit(self.allocator);
 
         // We allow shadowing of variables by removing entries instead of blocking addition.
-        const old = try self.values.fetchPut(self.allocator, owned_str, owned_value);
+        var old = try self.values.fetchPut(self.allocator, owned_str, owned_value);
         if (old != null) {
-            self.allocator.free(old.key);
-            old.value.deinit(self.allocator);
+            self.allocator.free(old.?.key);
+            old.?.value.deinit(self.allocator);
         }
     }
 
@@ -47,14 +47,14 @@ pub const Environment = struct {
             return null;
         }
 
-        return val.?.deepCopy(outside_allocator) catch {
+        return val.?.clone(outside_allocator) catch {
             return null;
         };
     }
 
     pub fn assign(self: *Self, name: token.Token, value: interpreter.Value) EnvironmentError!void {
         if (self.values.contains(name.lexeme)) {
-            const new_value = try value.deepCopy(self.allocator);
+            const new_value = try value.clone(self.allocator);
             const value_ptr = self.values.getPtr(name.lexeme).?;
             value_ptr.*.deinit(self.allocator);
             value_ptr.* = new_value;

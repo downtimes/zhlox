@@ -55,7 +55,7 @@ pub const Token = struct {
     literal: ?Literal,
     line: u32,
 
-    pub fn deepCopy(self: Self, allocator: std.mem.Allocator) !Self {
+    pub fn clone(self: Self, allocator: std.mem.Allocator) !Self {
         var new_literal = self.literal;
         if (new_literal != null) {
             new_literal = switch (new_literal.?) {

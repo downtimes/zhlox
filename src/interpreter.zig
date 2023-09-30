@@ -23,7 +23,7 @@ pub const Value = union(enum) {
 
     // TODO I'm not happy with the current state of the string handling in my code. Think of a better sheme that
     //      scales better and isn't as brittle.
-    pub fn deepCopy(self: Self, allocator: std.mem.Allocator) !Self {
+    pub fn clone(self: Self, allocator: std.mem.Allocator) !Self {
         var result = self;
 
         switch (self) {
@@ -98,7 +98,7 @@ pub const Interpreter = struct {
     }
 
     pub fn new(allocator: std.mem.Allocator) !Self {
-        const env = try enviroment.Environment.init(allocator);
+        const env = enviroment.Environment.init(allocator);
         var environments = try std.ArrayListUnmanaged(enviroment.Environment).initCapacity(allocator, 5);
         environments.appendAssumeCapacity(env);
         return Interpreter{ .allocator = allocator, .environments = environments };
@@ -182,7 +182,7 @@ pub const Interpreter = struct {
             },
             .block => |statements| {
                 // Open new environment for each nested block.
-                const new_env = try enviroment.Environment.init(self.allocator);
+                const new_env = enviroment.Environment.init(self.allocator);
                 try self.environments.append(self.allocator, new_env);
 
                 // Get back to the parent environment as soon as we are done with the block.
