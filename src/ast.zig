@@ -89,6 +89,10 @@ pub const Ast = struct {
         parent_alloc.destroy(self.arena);
     }
 
+    // Statement must be allocated with the allocator found in this ast.
+    // TODO: is it a more Zig style interface to have an alloc method on the ast instead which gives you a
+    //       pointer to the statement you can fill? I honestly am still pretty lost when it comes to managing memory
+    //       in Zig programs that are more than basic functions.
     pub fn append(self: *Self, statement: Stmt) !void {
         try self.statements.append(self.arena.allocator(), statement);
     }

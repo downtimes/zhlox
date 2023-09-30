@@ -1,3 +1,5 @@
+const std = @import("std");
+
 pub const Type = enum {
     left_paren,
     right_paren,
@@ -42,6 +44,7 @@ pub const Type = enum {
 
 pub const Literal = union(enum) {
     number: f64,
+    // It is a little strange that the literal value is basically just the lexeme without the quotes.
     string: []const u8,
 };
 
@@ -51,6 +54,22 @@ pub const Token = struct {
     lexeme: []const u8,
     literal: ?Literal,
     line: u32,
+
+    pub fn deepCopy(self: Self, allocator: std.mem.Allocator) !Self {
+        var new_literal = self.literal;
+        if (new_literal != null) {
+            new_literal = switch (new_literal.?) {
+                .string => |s| Literal{ .string = try allocator.dupe(u8, s) },
+                else => new_literal,
+            };
+        }
+        return Self{
+            .type_ = self.type_,
+            .lexeme = try allocator.dupe(u8, self.lexeme),
+            .literal = new_literal,
+            .line = self.line,
+        };
+    }
 
     pub fn output(self: Self, writer: anytype) !void {
         const name = @tagName(self.type_);

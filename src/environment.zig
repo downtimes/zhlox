@@ -4,40 +4,41 @@ const token = @import("token.zig");
 
 pub const EnvironmentError = error{ VariableNotFound, OutOfMemory };
 
-// TODO Not sure if the arena is the best allocation strategy here. If the Environment exists for a long time.
-//      Every time a string is changed or a new variable is introduced, the memory will be blocked for the lifetime.
-//      If we take the global environment that might be for years.
 pub const Environment = struct {
     const Self = @This();
 
-    arena: *std.heap.ArenaAllocator,
+    allocator: std.mem.Allocator,
     values: std.StringHashMapUnmanaged(interpreter.Value),
 
-    pub fn init(allocator: std.mem.Allocator) !Self {
+    pub fn init(allocator: std.mem.Allocator) Self {
         const env = Environment{
-            .arena = try allocator.create(std.heap.ArenaAllocator),
+            .allocator = allocator,
             .values = std.StringHashMapUnmanaged(interpreter.Value){},
         };
-        env.arena.* = std.heap.ArenaAllocator.init(allocator);
         return env;
     }
 
     pub fn deinit(self: *Self) void {
-        const parent_alloc = self.arena.child_allocator;
-        self.arena.deinit();
-        parent_alloc.destroy(self.arena);
+        var iter = self.values.iterator();
+        while (iter.next()) |elem| {
+            self.allocator.free(elem.key_ptr);
+            elem.value_ptr.*.deinit(self.allocator);
+        }
+        self.values.deinit(self.allocator);
     }
 
     pub fn define(self: *Self, name: []const u8, value: interpreter.Value) !void {
-        const allocator = self.arena.allocator();
+        const owned_str = try self.allocator.dupe(u8, name);
+        errdefer self.allocator.free(owned_str);
+        const owned_value = try value.deepCopy(self.allocator);
+        errdefer value.deinit(self.allocator);
 
-        const owned_str = try allocator.dupe(u8, name);
-
-        const owned_value = try allocator.create(interpreter.Value);
-        owned_value.* = try value.deepCopy(allocator);
-
-        // We allow shadowing of variables by not checking if the variable exists already.
-        try self.values.put(self.arena.allocator(), owned_str, owned_value.*);
+        // We allow shadowing of variables by removing entries instead of blocking addition.
+        const old = try self.values.fetchPut(self.allocator, owned_str, owned_value);
+        if (old != null) {
+            self.allocator.free(old.key);
+            old.value.deinit(self.allocator);
+        }
     }
 
     pub fn get(self: Self, name: token.Token, outside_allocator: std.mem.Allocator) ?interpreter.Value {
@@ -53,10 +54,10 @@ pub const Environment = struct {
 
     pub fn assign(self: *Self, name: token.Token, value: interpreter.Value) EnvironmentError!void {
         if (self.values.contains(name.lexeme)) {
-            const allocator = self.arena.allocator();
-            const new_value = try value.deepCopy(allocator);
-            var entry = self.values.getEntry(name.lexeme).?;
-            entry.value_ptr.* = new_value;
+            const new_value = try value.deepCopy(self.allocator);
+            const value_ptr = self.values.getPtr(name.lexeme).?;
+            value_ptr.*.deinit(self.allocator);
+            value_ptr.* = new_value;
             return;
         }
         return EnvironmentError.VariableNotFound;
