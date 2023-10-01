@@ -8,11 +8,15 @@ pub const Binary = struct {
     operator: token.Token,
     right: *Expr,
 
-    pub fn clone(self: Binary, allocator: Allocator) Allocator.Error!Binary {
+    fn clone(self: Binary, allocator: Allocator) Allocator.Error!Binary {
+        const new_left = try allocator.create(Expr);
+        new_left.* = try self.left.clone(allocator);
+        const new_right = try allocator.create(Expr);
+        new_right.* = try self.right.clone(allocator);
         return Binary{
-            .left = try self.left.clone(allocator),
+            .left = new_left,
             .operator = try self.operator.clone(allocator),
-            .right = try self.right.clone(allocator),
+            .right = new_right,
         };
     }
 };
@@ -21,10 +25,32 @@ pub const Unary = struct {
     operator: token.Token,
     right: *Expr,
 
-    pub fn clone(self: Unary, allocator: Allocator) Allocator.Error!Unary {
+    fn clone(self: Unary, allocator: Allocator) Allocator.Error!Unary {
+        const new_right = try allocator.create(Expr);
+        new_right.* = try self.right.clone(allocator);
         return Unary{
             .operator = try self.operator.clone(allocator),
-            .right = try self.right.clone(allocator),
+            .right = new_right,
+        };
+    }
+};
+
+pub const Call = struct {
+    callee: *Expr,
+    closing_paren: token.Token, // Used for error reporting line numbers.
+    arguments: std.ArrayListUnmanaged(Expr),
+
+    fn clone(self: Call, allocator: Allocator) Allocator.Error!Call {
+        const new_callee = try allocator.create(Expr);
+        new_callee.* = self.callee.clone(allocator);
+        var new_arguments = try self.arguments.clone(allocator);
+        for (new_arguments.items, self.arguments.items) |*new, old| {
+            new.* = try old.clone(allocator);
+        }
+        return Call{
+            .callee = new_callee,
+            .closing_parem = try self.closing_paren.clone(allocator),
+            .arguments = new_arguments,
         };
     }
 };
@@ -35,7 +61,7 @@ pub const Literal = union(enum) {
     bool_: bool,
     nil: void,
 
-    pub fn clone(self: Literal, allocator: Allocator) Allocator.Error!Literal {
+    fn clone(self: Literal, allocator: Allocator) Allocator.Error!Literal {
         return switch (self) {
             .string => |s| Literal{ .string = try allocator.dupe(u8, s) },
             else => self,
@@ -47,20 +73,22 @@ pub const Assignment = struct {
     name: token.Token,
     value: *Expr,
 
-    pub fn clone(self: Assignment, allocator: Allocator) Allocator.Error!Assignment {
+    fn clone(self: Assignment, allocator: Allocator) Allocator.Error!Assignment {
+        const new_value = try allocator.create(Expr);
+        new_value.* = try self.value.clone(allocator);
         return Assignment{
             .name = try self.name.clone(allocator),
-            .value = try self.value.clone(allocator),
+            .value = new_value,
         };
     }
 };
 
 pub const VariableDeclaration = struct {
     name: token.Token,
-    initializer: ?*Expr,
+    initializer: ?Expr,
 
-    pub fn clone(self: VariableDeclaration, allocator: Allocator) Allocator.Error!VariableDeclaration {
-        var new_initializer: ?*Expr = null;
+    fn clone(self: VariableDeclaration, allocator: Allocator) Allocator.Error!VariableDeclaration {
+        var new_initializer: ?Expr = null;
         if (self.initializer) |initializer| {
             new_initializer = try initializer.clone(allocator);
         }
@@ -72,11 +100,11 @@ pub const VariableDeclaration = struct {
 };
 
 pub const Conditional = struct {
-    condition: *Expr,
+    condition: Expr,
     then: *Stmt,
     els: ?*Stmt,
 
-    pub fn clone(self: Conditional, allocator: Allocator) Allocator.Error!Conditional {
+    fn clone(self: Conditional, allocator: Allocator) Allocator.Error!Conditional {
         const new_then = try allocator.create(Stmt);
         new_then.* = try self.then.clone(allocator);
         var new_els: ?*Stmt = null;
@@ -97,20 +125,24 @@ pub const Logical = struct {
     operator: token.Token,
     right: *Expr,
 
-    pub fn clone(self: Logical, allocator: Allocator) Allocator.Error!Logical {
+    fn clone(self: Logical, allocator: Allocator) Allocator.Error!Logical {
+        const new_left = try allocator.create(Expr);
+        new_left.* = try self.left.clone(allocator);
+        const new_right = try allocator.create(Expr);
+        new_right.* = try self.right.clone(allocator);
         return Logical{
-            .left = try self.left.clone(allocator),
+            .left = new_left,
             .operator = try self.operator.clone(allocator),
-            .right = try self.right.clone(allocator),
+            .right = new_right,
         };
     }
 };
 
 pub const WhileStmt = struct {
-    condition: *Expr,
+    condition: Expr,
     body: *Stmt,
 
-    pub fn clone(self: WhileStmt, allocator: Allocator) Allocator.Error!WhileStmt {
+    fn clone(self: WhileStmt, allocator: Allocator) Allocator.Error!WhileStmt {
         const new_body = try allocator.create(Stmt);
         new_body.* = try self.body.clone(allocator);
         return WhileStmt{ .condition = try self.condition.clone(allocator), .body = new_body };
@@ -118,14 +150,14 @@ pub const WhileStmt = struct {
 };
 
 pub const Stmt = union(enum) {
-    expr: *Expr,
+    expr: Expr,
     cond: Conditional,
-    print: *Expr,
+    print: Expr,
     while_: WhileStmt,
     var_decl: VariableDeclaration,
     block: std.ArrayListUnmanaged(Stmt),
 
-    pub fn clone(self: Stmt, allocator: Allocator) Allocator.Error!Stmt {
+    fn clone(self: Stmt, allocator: Allocator) Allocator.Error!Stmt {
         return switch (self) {
             .expr => |inner| Stmt{ .expr = try inner.clone(allocator) },
             .cond => |inner| Stmt{ .cond = try inner.clone(allocator) },
@@ -149,12 +181,12 @@ pub const Expr = union(enum) {
     literal: Literal,
     logical: Logical,
     unary: Unary,
+    call: Call,
     variable: token.Token,
     assign: Assignment,
 
-    pub fn clone(self: Expr, allocator: Allocator) Allocator.Error!*Expr {
-        var new_expr = try allocator.create(Expr);
-        new_expr.* = switch (self) {
+    fn clone(self: Expr, allocator: Allocator) Allocator.Error!Expr {
+        return switch (self) {
             .binary => |inner| Expr{ .binary = try inner.clone(allocator) },
             .grouping => |inner| Expr{ .grouping = try inner.clone(allocator) },
             .literal => |inner| Expr{ .literal = try inner.clone(allocator) },
@@ -162,8 +194,8 @@ pub const Expr = union(enum) {
             .unary => |inner| Expr{ .unary = try inner.clone(allocator) },
             .variable => |inner| Expr{ .variable = try inner.clone(allocator) },
             .assign => |inner| Expr{ .assign = try inner.clone(allocator) },
+            .call => |inner| Expr{ .call = try inner.clone(allocator) },
         };
-        return new_expr;
     }
 };
 

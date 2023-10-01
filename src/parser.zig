@@ -13,7 +13,7 @@ pub const Diagnostic = struct {
 pub const Parser = struct {
     const Self = @This();
     const Stmt = ParseError!ast.Stmt;
-    const Expr = ParseError!*ast.Expr;
+    const Expr = ParseError!ast.Expr;
 
     tokens: []token.Token,
     current: u32 = 0,
@@ -86,7 +86,7 @@ pub const Parser = struct {
         try self.consume(token.Type.identifier, "Expected variable name.");
         const name = self.previous();
 
-        var initializer: ?*ast.Expr = null;
+        var initializer: ?ast.Expr = null;
         if (self.match(&[_]token.Type{token.Type.equal})) {
             initializer = try self.expression(allocator);
         }
@@ -153,13 +153,13 @@ pub const Parser = struct {
             init = try self.expressionStatement(allocator);
         }
 
-        var cond: ?*ast.Expr = null;
+        var cond: ?ast.Expr = null;
         if (!self.check(token.Type.semicolon)) {
             cond = try self.expression(allocator);
         }
         try self.consume(token.Type.semicolon, "Expected ';' after loop condition.");
 
-        var after: ?*ast.Expr = null;
+        var after: ?ast.Expr = null;
         if (!self.check(token.Type.right_paren)) {
             after = try self.expression(allocator);
         }
@@ -175,7 +175,7 @@ pub const Parser = struct {
         }
 
         if (cond == null) {
-            cond.?.* = ast.Expr{ .literal = ast.Literal{ .bool_ = true } };
+            cond.? = ast.Expr{ .literal = ast.Literal{ .bool_ = true } };
         }
         const old_body = try allocator.create(ast.Stmt);
         old_body.* = body;
@@ -216,12 +216,11 @@ pub const Parser = struct {
 
         if (self.match(&[_]token.Type{token.Type.equal})) {
             const equals = self.previous();
-            const value = try self.assignment(allocator);
+            const value = try allocator.create(ast.Expr);
+            value.* = try self.assignment(allocator);
 
-            if (@as(std.meta.Tag(ast.Expr), expr.*) == .variable) {
-                const new_expr = try allocator.create(ast.Expr);
-                new_expr.* = ast.Expr{ .assign = ast.Assignment{ .name = expr.variable, .value = value } };
-                return new_expr;
+            if (@as(std.meta.Tag(ast.Expr), expr) == .variable) {
+                return ast.Expr{ .assign = ast.Assignment{ .name = expr.variable, .value = value } };
             }
 
             self.diagnostic = Diagnostic{
@@ -239,10 +238,11 @@ pub const Parser = struct {
 
         while (self.match(&[_]token.Type{token.Type.or_})) {
             const operator = self.previous();
-            const right = try self.logicalAnd(allocator);
-            const new_epxr = try allocator.create(ast.Expr);
-            new_epxr.* = ast.Expr{ .logical = ast.Logical{ .left = result, .operator = operator, .right = right } };
-            result = new_epxr;
+            const left = try allocator.create(ast.Expr);
+            left.* = result;
+            const right = try allocator.create(ast.Expr);
+            right.* = try self.logicalAnd(allocator);
+            result = ast.Expr{ .logical = ast.Logical{ .left = left, .operator = operator, .right = right } };
         }
         return result;
     }
@@ -252,10 +252,11 @@ pub const Parser = struct {
 
         while (self.match(&[_]token.Type{token.Type.and_})) {
             const operator = self.previous();
-            const right = try self.equality(allocator);
-            const new_epxr = try allocator.create(ast.Expr);
-            new_epxr.* = ast.Expr{ .logical = ast.Logical{ .left = result, .operator = operator, .right = right } };
-            result = new_epxr;
+            const left = try allocator.create(ast.Expr);
+            left.* = result;
+            const right = try allocator.create(ast.Expr);
+            right.* = try self.equality(allocator);
+            result = ast.Expr{ .logical = ast.Logical{ .left = left, .operator = operator, .right = right } };
         }
         return result;
     }
@@ -265,11 +266,12 @@ pub const Parser = struct {
 
         while (self.match(&[_]token.Type{ token.Type.bang_equal, token.Type.equal_equal })) {
             const operator = self.previous();
-            const right = try self.comparison(allocator);
+            const left = try allocator.create(ast.Expr);
+            left.* = result;
+            const right = try allocator.create(ast.Expr);
+            right.* = try self.comparison(allocator);
 
-            const new_expr = try allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .binary = ast.Binary{ .left = result, .operator = operator, .right = right } };
-            result = new_expr;
+            result = ast.Expr{ .binary = ast.Binary{ .left = left, .operator = operator, .right = right } };
         }
         return result;
     }
@@ -279,11 +281,12 @@ pub const Parser = struct {
 
         while (self.match(&[_]token.Type{ token.Type.greater, token.Type.gerater_equal, token.Type.less, token.Type.less_equal })) {
             const operator = self.previous();
-            const right = try self.term(allocator);
+            const left = try allocator.create(ast.Expr);
+            left.* = result;
+            const right = try allocator.create(ast.Expr);
+            right.* = try self.term(allocator);
 
-            const new_expr = try allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .binary = ast.Binary{ .left = result, .operator = operator, .right = right } };
-            result = new_expr;
+            result = ast.Expr{ .binary = ast.Binary{ .left = left, .operator = operator, .right = right } };
         }
         return result;
     }
@@ -293,11 +296,12 @@ pub const Parser = struct {
 
         while (self.match(&[_]token.Type{ token.Type.minus, token.Type.plus })) {
             const operator = self.previous();
-            const right = try self.factor(allocator);
+            const left = try allocator.create(ast.Expr);
+            left.* = result;
+            const right = try allocator.create(ast.Expr);
+            right.* = try self.factor(allocator);
 
-            const new_expr = try allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .binary = ast.Binary{ .left = result, .operator = operator, .right = right } };
-            result = new_expr;
+            result = ast.Expr{ .binary = ast.Binary{ .left = left, .operator = operator, .right = right } };
         }
         return result;
     }
@@ -307,11 +311,11 @@ pub const Parser = struct {
 
         while (self.match(&[_]token.Type{ token.Type.slash, token.Type.star })) {
             const operator = self.previous();
-            const right = try self.unary(allocator);
-
-            const new_expr = try allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .binary = ast.Binary{ .left = result, .operator = operator, .right = right } };
-            result = new_expr;
+            const left = try allocator.create(ast.Expr);
+            left.* = result;
+            const right = try allocator.create(ast.Expr);
+            right.* = try self.unary(allocator);
+            result = ast.Expr{ .binary = ast.Binary{ .left = left, .operator = operator, .right = right } };
         }
         return result;
     }
@@ -319,11 +323,10 @@ pub const Parser = struct {
     fn unary(self: *Self, allocator: std.mem.Allocator) Expr {
         if (self.match(&[_]token.Type{ token.Type.bang, token.Type.minus })) {
             const operator = self.previous();
-            const right = try self.unary(allocator);
+            const right = try allocator.create(ast.Expr);
+            right.* = try self.unary(allocator);
 
-            const new_expr = try allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .unary = ast.Unary{ .operator = operator, .right = right } };
-            return new_expr;
+            return ast.Expr{ .unary = ast.Unary{ .operator = operator, .right = right } };
         }
 
         return self.primary(allocator);
@@ -331,45 +334,34 @@ pub const Parser = struct {
 
     fn primary(self: *Self, allocator: std.mem.Allocator) Expr {
         if (self.match(&[_]token.Type{token.Type.false})) {
-            const new_expr = try allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .literal = ast.Literal{ .bool_ = false } };
-            return new_expr;
+            return ast.Expr{ .literal = ast.Literal{ .bool_ = false } };
         }
         if (self.match(&[_]token.Type{token.Type.true})) {
-            const new_expr = try allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .literal = ast.Literal{ .bool_ = true } };
-            return new_expr;
+            return ast.Expr{ .literal = ast.Literal{ .bool_ = true } };
         }
         if (self.match(&[_]token.Type{token.Type.nil})) {
-            const new_expr = try allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .literal = ast.Literal.nil };
-            return new_expr;
+            return ast.Expr{ .literal = ast.Literal.nil };
         }
 
         if (self.match(&[_]token.Type{ token.Type.number, token.Type.string })) {
-            const new_expr = try allocator.create(ast.Expr);
             // Literal should be there since we matched on the type.
             const literal = switch (self.previous().literal.?) {
                 .number => |n| ast.Literal{ .number = n },
                 .string => |s| ast.Literal{ .string = try allocator.dupe(u8, s) },
             };
-            new_expr.* = ast.Expr{ .literal = literal };
-            return new_expr;
+            return ast.Expr{ .literal = literal };
         }
 
         if (self.match(&[_]token.Type{token.Type.identifier})) {
-            const new_expr = try allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .variable = self.previous() };
-            return new_expr;
+            return ast.Expr{ .variable = self.previous() };
         }
 
         if (self.match(&[_]token.Type{token.Type.left_paren})) {
-            const result = try self.expression(allocator);
+            const grouping = try allocator.create(ast.Expr);
+            grouping.* = try self.expression(allocator);
 
             try self.consume(token.Type.right_paren, "Expected closing ')' after expression.");
-            const new_expr = try allocator.create(ast.Expr);
-            new_expr.* = ast.Expr{ .grouping = result };
-            return new_expr;
+            return ast.Expr{ .grouping = grouping };
         }
 
         // None of the cases we expected match here. Therefore we need to report an error and unwind

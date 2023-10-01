@@ -134,7 +134,7 @@ pub const Interpreter = struct {
     fn executeStatement(self: *Self, output: std.fs.File.Writer, stmt: ast.Stmt) RuntimError!void {
         switch (stmt) {
             .cond => |c| {
-                var cond = try self.evaluateExpression(c.condition.*);
+                var cond = try self.evaluateExpression(c.condition);
                 defer cond.deinit(self.allocator);
                 if (cond.isTruthy()) {
                     try self.executeStatement(output, c.then.*);
@@ -143,12 +143,12 @@ pub const Interpreter = struct {
                 }
             },
             .expr => |e| {
-                var value = try self.evaluateExpression(e.*);
+                var value = try self.evaluateExpression(e);
                 defer value.deinit(self.allocator);
             },
             .print => |e| {
                 // TODO do I want to propagate print errors upwards?
-                var value = try self.evaluateExpression(e.*);
+                var value = try self.evaluateExpression(e);
                 defer value.deinit(self.allocator);
 
                 switch (value) {
@@ -160,21 +160,21 @@ pub const Interpreter = struct {
                 _ = try output.write("\n");
             },
             .while_ => |w| {
-                var cond = try self.evaluateExpression(w.condition.*);
+                var cond = try self.evaluateExpression(w.condition);
                 defer cond.deinit(self.allocator);
 
                 while (cond.isTruthy()) {
                     try self.executeStatement(output, w.body.*);
                     cond.deinit(self.allocator);
-                    cond = try self.evaluateExpression(w.condition.*);
+                    cond = try self.evaluateExpression(w.condition);
                 }
             },
             .var_decl => |decl| {
                 var val: Value = Value.nil;
                 defer val.deinit(self.allocator);
 
-                if (decl.initializer != null) {
-                    val = try self.evaluateExpression(decl.initializer.?.*);
+                if (decl.initializer) |initializer| {
+                    val = try self.evaluateExpression(initializer);
                 }
 
                 var current_env = &self.environments.items[self.environments.items.len - 1];
@@ -254,6 +254,11 @@ pub const Interpreter = struct {
             },
             .assign => |assignment| {
                 return self.evaluateAssignment(assignment);
+            },
+            .call => |call| {
+                _ = call;
+                //TODO
+                return RuntimError.Unimplemented;
             },
         }
 
