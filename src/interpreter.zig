@@ -6,6 +6,13 @@ const scanner = @import("scanner.zig");
 const parser = @import("parser.zig");
 const main = @import("main.zig");
 
+const ValueError = error{ NonCallable, Arity };
+
+const Builtin = struct {
+    arity: u8,
+    function: *const fn ([]Value) Value,
+};
+
 pub const Value = union(enum) {
     const Self = @This();
 
@@ -13,6 +20,7 @@ pub const Value = union(enum) {
     number: f64,
     bool_: bool,
     nil: void,
+    builtin: Builtin,
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -23,7 +31,7 @@ pub const Value = union(enum) {
 
     // TODO I'm not happy with the current state of the string handling in my code. Think of a better sheme that
     //      scales better and isn't as brittle.
-    pub fn clone(self: Self, allocator: std.mem.Allocator) !Self {
+    pub fn clone(self: Self, allocator: std.mem.Allocator) std.mem.Allocator.Error!Self {
         var result = self;
 
         switch (self) {
@@ -36,6 +44,18 @@ pub const Value = union(enum) {
         return result;
     }
 
+    fn call(self: Self, arguments: []Value) ValueError!Value {
+        switch (self) {
+            .string, .number, .bool_, .nil => return ValueError.NonCallable,
+            .builtin => |f| {
+                if (f.arity != arguments.len) {
+                    return ValueError.Arity;
+                }
+                return f.function(arguments);
+            },
+        }
+    }
+
     // Strange rule according to Lex definition...
     fn isTruthy(self: Self) bool {
         switch (self) {
@@ -43,6 +63,7 @@ pub const Value = union(enum) {
             .number => return true,
             .nil => return false,
             .string => return true,
+            .builtin => return true,
         }
     }
 
@@ -72,13 +93,32 @@ pub const Value = union(enum) {
                     else => return false,
                 }
             },
+            .builtin => |b1| {
+                switch (other) {
+                    .builtin => |b2| return b1.function == b2.function,
+                    else => return false,
+                }
+            },
         }
     }
 };
 
-pub const RuntimError = error{ MinusOperand, UndefinedVariable, IllegalBinaryOperand, Unimplemented, OutOfMemory } || std.fs.File.WriteError;
+fn builtinClock(arguments: []Value) Value {
+    _ = arguments;
+    const time: f64 = @floatFromInt(@divTrunc(std.time.milliTimestamp(), 1000));
+    return Value{ .number = time };
+}
 
-pub const Diagonstic = struct {
+pub const RuntimError = error{
+    MinusOperand,
+    UndefinedVariable,
+    IllegalBinaryOperand,
+    InvalidCall,
+    Unimplemented,
+    OutOfMemory,
+} || std.fs.File.WriteError;
+
+pub const Diagnostic = struct {
     token_: token.Token, // Associated token to get the operation and the line number.
     message: []const u8,
 };
@@ -88,7 +128,7 @@ pub const Interpreter = struct {
 
     environments: std.ArrayListUnmanaged(enviroment.Environment),
     allocator: std.mem.Allocator,
-    diagnostic: ?Diagonstic = null,
+    diagnostic: ?Diagnostic = null,
 
     pub fn deinit(self: *Self) void {
         for (self.environments.items) |*env| {
@@ -100,7 +140,13 @@ pub const Interpreter = struct {
     pub fn new(allocator: std.mem.Allocator) !Self {
         const env = enviroment.Environment.init(allocator);
         var environments = try std.ArrayListUnmanaged(enviroment.Environment).initCapacity(allocator, 5);
+        errdefer environments.deinit(allocator);
+
         environments.appendAssumeCapacity(env);
+        var global_env = &environments.items[environments.items.len - 1];
+        const clock = Value{ .builtin = Builtin{ .arity = 0, .function = &builtinClock } };
+        try global_env.define("clock", clock);
+
         return Interpreter{ .allocator = allocator, .environments = environments };
     }
 
@@ -156,6 +202,7 @@ pub const Interpreter = struct {
                     .string => |s| try output.print("{s}", .{s}),
                     .bool_ => |b| try output.print("{}", .{b}),
                     .nil => _ = try output.write("nil"),
+                    .builtin => _ = try output.write("<native fn>"),
                 }
                 _ = try output.write("\n");
             },
@@ -238,7 +285,7 @@ pub const Interpreter = struct {
                         return Value{ .number = right.number };
                     }
 
-                    self.diagnostic = Diagonstic{
+                    self.diagnostic = Diagnostic{
                         .token_ = u.operator,
                         .message = "operand must be a number.",
                     };
@@ -256,9 +303,26 @@ pub const Interpreter = struct {
                 return self.evaluateAssignment(assignment);
             },
             .call => |call| {
-                _ = call;
-                //TODO
-                return RuntimError.Unimplemented;
+                const callee = try self.evaluateExpression(call.callee.*);
+                var arguments = std.ArrayList(Value).init(self.allocator);
+                defer arguments.deinit();
+
+                for (call.arguments.items) |arg| {
+                    try arguments.append(try self.evaluateExpression(arg));
+                }
+                return callee.call(arguments.items) catch |err| {
+                    self.diagnostic = Diagnostic{
+                        .token_ = call.closing_paren,
+                        .message = "",
+                    };
+                    if (err == ValueError.NonCallable) {
+                        self.diagnostic.?.message = "can only call functions and classes.";
+                    } else if (err == ValueError.Arity) {
+                        // TODO: better reporting with the expected argument count and received argument count.
+                        self.diagnostic.?.message = "wrong number of arguments for function or class.";
+                    }
+                    return RuntimError.InvalidCall;
+                };
             },
         }
 
@@ -276,7 +340,7 @@ pub const Interpreter = struct {
         } else null;
 
         if (val == null) {
-            self.diagnostic = Diagonstic{
+            self.diagnostic = Diagnostic{
                 .token_ = variable,
                 .message = "is an undefined variable.",
             };
@@ -322,14 +386,14 @@ pub const Interpreter = struct {
             .equal_equal => return Value{ .bool_ = left.equal(right) },
             .bang_equal => return Value{ .bool_ = !left.equal(right) },
             .minus, .star, .slash, .less, .less_equal, .greater, .gerater_equal => {
-                self.diagnostic = Diagonstic{
+                self.diagnostic = Diagnostic{
                     .token_ = binary.operator,
                     .message = "operands must be numbers.",
                 };
                 return RuntimError.IllegalBinaryOperand;
             },
             .plus => {
-                self.diagnostic = Diagonstic{
+                self.diagnostic = Diagnostic{
                     .token_ = binary.operator,
                     .message = "operands must be two numbers or two strings.",
                 };
@@ -367,7 +431,7 @@ pub const Interpreter = struct {
         }
 
         // No assignment possible so we report an error.
-        self.diagnostic = Diagonstic{
+        self.diagnostic = Diagnostic{
             .token_ = expr.name,
             .message = "is an undefined variable.",
         };

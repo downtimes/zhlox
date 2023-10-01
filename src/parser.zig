@@ -3,7 +3,7 @@ const token = @import("token.zig");
 const main = @import("main.zig");
 const ast = @import("ast.zig");
 
-const ParseError = error{ UnexpectedToken, InvalidAssignment, OutOfMemory };
+const ParseError = error{ UnexpectedToken, InvalidAssignment, OutOfMemory, TooManyArguments };
 
 pub const Diagnostic = struct {
     found: token.Token,
@@ -329,7 +329,50 @@ pub const Parser = struct {
             return ast.Expr{ .unary = ast.Unary{ .operator = operator, .right = right } };
         }
 
-        return self.primary(allocator);
+        return self.call(allocator);
+    }
+
+    fn call(self: *Self, allocator: std.mem.Allocator) Expr {
+        var result = try self.primary(allocator);
+
+        // The code is a little more verbose than it needs to be in preparation for more code later down the line.
+        while (true) {
+            if (self.match(&[_]token.Type{token.Type.left_paren})) {
+                result = try self.finishCall(result, allocator);
+            } else {
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    fn finishCall(self: *Self, callee: ast.Expr, allocator: std.mem.Allocator) Expr {
+        var arguments = std.ArrayListUnmanaged(ast.Expr){};
+        if (!self.check(token.Type.right_paren)) {
+            try arguments.append(allocator, try self.expression(allocator));
+            while (self.match(&[_]token.Type{token.Type.comma})) {
+                try arguments.append(allocator, try self.expression(allocator));
+                if (arguments.items.len >= 255) {
+                    self.diagnostic = Diagnostic{
+                        .found = self.peek(),
+                        .message = "Can't have more than 255 arguments.",
+                    };
+                    return ParseError.TooManyArguments;
+                }
+            }
+        }
+
+        try self.consume(token.Type.right_paren, "Expected ')' after arguments.");
+        const closing_paren = self.previous();
+        const callee_place = try allocator.create(ast.Expr);
+        callee_place.* = callee;
+
+        return ast.Expr{ .call = ast.Call{
+            .callee = callee_place,
+            .closing_paren = closing_paren,
+            .arguments = arguments,
+        } };
     }
 
     fn primary(self: *Self, allocator: std.mem.Allocator) Expr {
