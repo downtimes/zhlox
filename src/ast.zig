@@ -35,6 +35,29 @@ pub const Unary = struct {
     }
 };
 
+pub const Function = struct {
+    name: token.Token,
+    params: std.ArrayListUnmanaged(token.Token),
+    body: std.ArrayListUnmanaged(Stmt),
+
+    fn clone(self: Function, allocator: Allocator) Allocator.Error!Function {
+        var new_params = try self.params.clone(allocator);
+        for (new_params.items, self.params.items) |*new, old| {
+            new.* = try old.clone(allocator);
+        }
+        var new_body = try self.body.clone(allocator);
+        for (new_body.items, self.body.items) |*new, old| {
+            new.* = try old.clone(allocator);
+        }
+
+        return Function{
+            .name = try self.name.clone(allocator),
+            .params = new_params,
+            .body = new_body,
+        };
+    }
+};
+
 pub const Call = struct {
     callee: *Expr,
     closing_paren: token.Token, // Used for error reporting line numbers.
@@ -42,14 +65,14 @@ pub const Call = struct {
 
     fn clone(self: Call, allocator: Allocator) Allocator.Error!Call {
         const new_callee = try allocator.create(Expr);
-        new_callee.* = self.callee.clone(allocator);
+        new_callee.* = try self.callee.clone(allocator);
         var new_arguments = try self.arguments.clone(allocator);
         for (new_arguments.items, self.arguments.items) |*new, old| {
             new.* = try old.clone(allocator);
         }
         return Call{
             .callee = new_callee,
-            .closing_parem = try self.closing_paren.clone(allocator),
+            .closing_paren = try self.closing_paren.clone(allocator),
             .arguments = new_arguments,
         };
     }
@@ -155,6 +178,7 @@ pub const Stmt = union(enum) {
     print: Expr,
     while_: WhileStmt,
     var_decl: VariableDeclaration,
+    function: Function,
     block: std.ArrayListUnmanaged(Stmt),
 
     fn clone(self: Stmt, allocator: Allocator) Allocator.Error!Stmt {
@@ -171,6 +195,7 @@ pub const Stmt = union(enum) {
                 }
                 break :blk Stmt{ .block = new_block };
             },
+            .function => |inner| Stmt{ .function = try inner.clone(allocator) },
         };
     }
 };
@@ -188,7 +213,11 @@ pub const Expr = union(enum) {
     fn clone(self: Expr, allocator: Allocator) Allocator.Error!Expr {
         return switch (self) {
             .binary => |inner| Expr{ .binary = try inner.clone(allocator) },
-            .grouping => |inner| Expr{ .grouping = try inner.clone(allocator) },
+            .grouping => |inner| {
+                const new_group = try allocator.create(Expr);
+                new_group.* = try inner.clone(allocator);
+                return Expr{ .grouping = new_group };
+            },
             .literal => |inner| Expr{ .literal = try inner.clone(allocator) },
             .logical => |inner| Expr{ .logical = try inner.clone(allocator) },
             .unary => |inner| Expr{ .unary = try inner.clone(allocator) },
@@ -205,6 +234,15 @@ pub const Ast = struct {
     arena: *std.heap.ArenaAllocator,
     // Expectation is that all sub things of statements are heap allocated into the arena above.
     statements: std.ArrayListUnmanaged(Stmt),
+
+    pub fn from(function: Function, allocator: Allocator) !Self {
+        var new_ast = try init(allocator);
+        errdefer new_ast.deinit();
+
+        const function_copy = try function.clone(new_ast.arena.allocator());
+        try new_ast.append(Stmt{ .function = function_copy });
+        return new_ast;
+    }
 
     pub fn init(allocator: Allocator) !Self {
         var result = Ast{

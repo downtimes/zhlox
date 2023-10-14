@@ -75,11 +75,43 @@ pub const Parser = struct {
     }
 
     fn declaration(self: *Self, allocator: std.mem.Allocator) Stmt {
+        if (self.match(&[_]token.Type{token.Type.fun})) {
+            return self.function(allocator);
+        }
         if (self.match(&[_]token.Type{token.Type.var_})) {
             return self.variableDeclaration(allocator);
         }
 
         return self.statement(allocator);
+    }
+
+    fn function(self: *Self, allocator: std.mem.Allocator) Stmt {
+        try self.consume(token.Type.identifier, "Expected function name.");
+        const name = self.previous();
+
+        try self.consume(token.Type.left_paren, "Expected '(' after function name.");
+        var params = std.ArrayListUnmanaged(token.Token){};
+
+        if (!self.check(token.Type.right_paren)) {
+            try self.consume(token.Type.identifier, "Expected parameter name.");
+            try params.append(allocator, self.previous());
+            while (self.match(&[_]token.Type{token.Type.comma})) {
+                try self.consume(token.Type.identifier, "Expected parameter name.");
+                try params.append(allocator, self.previous());
+                if (params.items.len >= 255) {
+                    self.diagnostic = Diagnostic{
+                        .found = self.peek(),
+                        .message = "Can't have more than 255 arguments.",
+                    };
+                    return ParseError.TooManyArguments;
+                }
+            }
+        }
+        try self.consume(token.Type.right_paren, "Expcted ')' after parameters.");
+
+        try self.consume(token.Type.left_brace, "Expected '{' before function body.");
+        const body = try self.block(allocator);
+        return ast.Stmt{ .function = ast.Function{ .name = name, .params = params, .body = body } };
     }
 
     fn variableDeclaration(self: *Self, allocator: std.mem.Allocator) Stmt {

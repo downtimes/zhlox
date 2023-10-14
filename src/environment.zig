@@ -7,11 +7,23 @@ pub const EnvironmentError = error{ VariableNotFound, OutOfMemory };
 pub const Environment = struct {
     const Self = @This();
 
+    parent: ?*Environment,
     allocator: std.mem.Allocator,
     values: std.StringHashMapUnmanaged(interpreter.Value),
 
+    // Parent environment must be valid as long as this environment is used.
+    pub fn init_with_parent(allocator: std.mem.Allocator, parent: *Environment) Self {
+        const env = Environment{
+            .parent = parent,
+            .allocator = allocator,
+            .values = std.StringHashMapUnmanaged(interpreter.Value){},
+        };
+        return env;
+    }
+
     pub fn init(allocator: std.mem.Allocator) Self {
         const env = Environment{
+            .parent = null,
             .allocator = allocator,
             .values = std.StringHashMapUnmanaged(interpreter.Value){},
         };
@@ -35,21 +47,23 @@ pub const Environment = struct {
 
         // We allow shadowing of variables by removing entries instead of blocking addition.
         var old = try self.values.fetchPut(self.allocator, owned_str, owned_value);
-        if (old != null) {
-            self.allocator.free(old.?.key);
-            old.?.value.deinit(self.allocator);
+        if (old) |*o| {
+            self.allocator.free(o.key);
+            o.value.deinit(self.allocator);
         }
     }
 
     pub fn get(self: Self, name: token.Token, outside_allocator: std.mem.Allocator) ?interpreter.Value {
         const val = self.values.get(name.lexeme);
-        if (val == null) {
-            return null;
+        if (val) |v| {
+            return v.clone(outside_allocator) catch {
+                return null;
+            };
+        } else if (self.parent) |parent| {
+            return parent.get(name, outside_allocator);
         }
 
-        return val.?.clone(outside_allocator) catch {
-            return null;
-        };
+        return null;
     }
 
     pub fn assign(self: *Self, name: token.Token, value: interpreter.Value) EnvironmentError!void {
@@ -59,7 +73,10 @@ pub const Environment = struct {
             value_ptr.*.deinit(self.allocator);
             value_ptr.* = new_value;
             return;
+        } else if (self.parent) |parent| {
+            return parent.assign(name, value);
         }
+
         return EnvironmentError.VariableNotFound;
     }
 };

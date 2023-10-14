@@ -1,16 +1,26 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const token = @import("token.zig");
-const enviroment = @import("environment.zig");
+const environment = @import("environment.zig");
 const scanner = @import("scanner.zig");
 const parser = @import("parser.zig");
 const main = @import("main.zig");
 
 const ValueError = error{ NonCallable, Arity };
+const CallError = ValueError || RuntimError;
 
 const Builtin = struct {
     arity: u8,
     function: *const fn ([]Value) Value,
+};
+
+const Function = struct {
+    declaration: ast.Ast,
+
+    fn function(self: Function) Function {
+        // We know the only statement in the ast is the function itself. The function statement is always present.
+        return self.declaration.statements[0].function;
+    }
 };
 
 pub const Value = union(enum) {
@@ -21,10 +31,12 @@ pub const Value = union(enum) {
     bool_: bool,
     nil: void,
     builtin: Builtin,
+    function: Function,
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .string => |s| allocator.free(s),
+            .function => |f| f.declaration.deinit(),
             else => {},
         }
     }
@@ -39,12 +51,15 @@ pub const Value = union(enum) {
                 const new_str = try allocator.dupe(u8, s);
                 result.string = new_str;
             },
+            .function => |f| {
+                result.function.declaration = try f.declaration.clone(allocator);
+            },
             else => {},
         }
         return result;
     }
 
-    fn call(self: Self, arguments: []Value) ValueError!Value {
+    fn call(self: Self, arguments: []Value, interpreter: *Interpreter, output: std.fs.File.Writer) CallError!Value {
         switch (self) {
             .string, .number, .bool_, .nil => return ValueError.NonCallable,
             .builtin => |f| {
@@ -52,6 +67,22 @@ pub const Value = union(enum) {
                     return ValueError.Arity;
                 }
                 return f.function(arguments);
+            },
+            .function => |f| {
+                const func = f.function();
+                if (func.params.items.len != arguments.len) {
+                    return ValueError.Arity;
+                }
+
+                var new_env = environment.Environment.init_with_parent(interpreter.allocator, &interpreter.global_environment);
+                defer new_env.deinit();
+
+                for (func.params.items, arguments) |param, argument| {
+                    try new_env.define(param.lexeme, argument);
+                }
+
+                try interpreter.executeBlock(func.body.items, &new_env, output);
+                return Value.nil;
             },
         }
     }
@@ -64,6 +95,7 @@ pub const Value = union(enum) {
             .nil => return false,
             .string => return true,
             .builtin => return true,
+            .function => return true,
         }
     }
 
@@ -99,6 +131,12 @@ pub const Value = union(enum) {
                     else => return false,
                 }
             },
+            .function => |_| {
+                switch (other) {
+                    .function => return false, //TODO think about when two functions should be equal.
+                    else => return false,
+                }
+            },
         }
     }
 };
@@ -126,28 +164,27 @@ pub const Diagnostic = struct {
 pub const Interpreter = struct {
     const Self = @This();
 
-    environments: std.ArrayListUnmanaged(enviroment.Environment),
+    global_environment: environment.Environment,
+    active_environment: *environment.Environment,
     allocator: std.mem.Allocator,
     diagnostic: ?Diagnostic = null,
 
     pub fn deinit(self: *Self) void {
-        for (self.environments.items) |*env| {
-            env.deinit();
-        }
-        self.environments.deinit(self.allocator);
+        self.global_environment.deinit();
     }
 
     pub fn new(allocator: std.mem.Allocator) !Self {
-        const env = enviroment.Environment.init(allocator);
-        var environments = try std.ArrayListUnmanaged(enviroment.Environment).initCapacity(allocator, 5);
-        errdefer environments.deinit(allocator);
+        var interpreter = Interpreter{
+            .allocator = allocator,
+            .global_environment = environment.Environment.init(allocator),
+            .active_environment = undefined,
+        };
+        errdefer interpreter.deinit();
 
-        environments.appendAssumeCapacity(env);
-        var global_env = &environments.items[environments.items.len - 1];
         const clock = Value{ .builtin = Builtin{ .arity = 0, .function = &builtinClock } };
-        try global_env.define("clock", clock);
+        try interpreter.global_environment.define("clock", clock);
 
-        return Interpreter{ .allocator = allocator, .environments = environments };
+        return interpreter;
     }
 
     pub fn run(self: *Self, stdout: std.fs.File.Writer, input: []const u8) !void {
@@ -160,41 +197,52 @@ pub const Interpreter = struct {
         var parse = parser.Parser{ .tokens = tokens.items };
         const parse_tree = try parse.parseInto(arena.allocator());
 
-        self.execute(stdout, parse_tree.statements.items) catch |err| {
-            if (err == RuntimError.Unimplemented) {
-                _ = try stdout.write("Hit unimplemented part of the interpreter.");
-            } else {
-                const diagnostic = self.diagnostic.?;
-                main.reportError(diagnostic.token_.line, &[_][]const u8{ "Runtime Error:", diagnostic.token_.lexeme, " ", diagnostic.message });
-            }
-            return err;
-        };
+        self.active_environment = &self.global_environment;
+        try self.execute(parse_tree.statements.items, stdout);
     }
 
-    fn execute(self: *Self, output: std.fs.File.Writer, statements: []ast.Stmt) RuntimError!void {
+    fn execute(self: *Self, statements: []ast.Stmt, output: std.fs.File.Writer) RuntimError!void {
         for (statements) |stmt| {
-            try self.executeStatement(output, stmt);
+            self.executeStatement(stmt, output) catch |err| {
+                if (err == RuntimError.Unimplemented) {
+                    _ = try output.write("Hit unimplemented part of the interpreter.");
+                } else {
+                    const diagnostic = self.diagnostic.?;
+                    main.reportError(diagnostic.token_.line, &[_][]const u8{ "Runtime Error:", diagnostic.token_.lexeme, " ", diagnostic.message });
+                }
+                return err;
+            };
         }
     }
 
-    fn executeStatement(self: *Self, output: std.fs.File.Writer, stmt: ast.Stmt) RuntimError!void {
+    fn executeBlock(self: *Self, statements: []ast.Stmt, env: *environment.Environment, output: std.fs.File.Writer) RuntimError!void {
+        const previous_environment = self.active_environment;
+        defer self.active_environment = previous_environment;
+
+        self.active_environment = env;
+        for (statements) |statement| {
+            try self.executeStatement(statement, output);
+        }
+    }
+
+    fn executeStatement(self: *Self, stmt: ast.Stmt, output: std.fs.File.Writer) RuntimError!void {
         switch (stmt) {
             .cond => |c| {
-                var cond = try self.evaluateExpression(c.condition);
+                var cond = try self.evaluateExpression(c.condition, output);
                 defer cond.deinit(self.allocator);
                 if (cond.isTruthy()) {
-                    try self.executeStatement(output, c.then.*);
+                    try self.executeStatement(c.then.*, output);
                 } else if (c.els != null) {
-                    try self.executeStatement(output, c.els.?.*);
+                    try self.executeStatement(c.els.?.*, output);
                 }
             },
             .expr => |e| {
-                var value = try self.evaluateExpression(e);
+                var value = try self.evaluateExpression(e, output);
                 defer value.deinit(self.allocator);
             },
             .print => |e| {
                 // TODO do I want to propagate print errors upwards?
-                var value = try self.evaluateExpression(e);
+                var value = try self.evaluateExpression(e, output);
                 defer value.deinit(self.allocator);
 
                 switch (value) {
@@ -203,17 +251,21 @@ pub const Interpreter = struct {
                     .bool_ => |b| try output.print("{}", .{b}),
                     .nil => _ = try output.write("nil"),
                     .builtin => _ = try output.write("<native fn>"),
+                    .function => |f| {
+                        const func = f.function();
+                        try output.print("<fn {s}>", .{func.name.lexeme});
+                    },
                 }
                 _ = try output.write("\n");
             },
             .while_ => |w| {
-                var cond = try self.evaluateExpression(w.condition);
+                var cond = try self.evaluateExpression(w.condition, output);
                 defer cond.deinit(self.allocator);
 
                 while (cond.isTruthy()) {
-                    try self.executeStatement(output, w.body.*);
+                    try self.executeStatement(w.body.*, output);
                     cond.deinit(self.allocator);
-                    cond = try self.evaluateExpression(w.condition);
+                    cond = try self.evaluateExpression(w.condition, output);
                 }
             },
             .var_decl => |decl| {
@@ -221,31 +273,29 @@ pub const Interpreter = struct {
                 defer val.deinit(self.allocator);
 
                 if (decl.initializer) |initializer| {
-                    val = try self.evaluateExpression(initializer);
+                    val = try self.evaluateExpression(initializer, output);
                 }
 
-                var current_env = &self.environments.items[self.environments.items.len - 1];
-                try current_env.define(decl.name.lexeme, val);
+                try self.active_environment.define(decl.name.lexeme, val);
             },
             .block => |statements| {
                 // Open new environment for each nested block.
-                const new_env = enviroment.Environment.init(self.allocator);
-                try self.environments.append(self.allocator, new_env);
+                var new_env = environment.Environment.init_with_parent(self.allocator, self.active_environment);
+                defer new_env.deinit();
 
-                // Get back to the parent environment as soon as we are done with the block.
-                defer {
-                    var used_env = self.environments.pop();
-                    used_env.deinit();
-                }
+                try self.executeBlock(statements.items, &new_env, output);
+            },
+            .function => |f| {
+                const body = try ast.Ast.from(f, self.allocator);
+                defer body.deinit();
 
-                for (statements.items) |statement| {
-                    try self.executeStatement(output, statement);
-                }
+                const function = Function{ .declaration = body };
+                try self.active_environment.define(f.name.lexeme, Value{ .function = function });
             },
         }
     }
 
-    fn evaluateExpression(self: *Self, expr: ast.Expr) RuntimError!Value {
+    fn evaluateExpression(self: *Self, expr: ast.Expr, output: std.fs.File.Writer) RuntimError!Value {
         switch (expr) {
             .literal => |l| {
                 return switch (l) {
@@ -259,10 +309,10 @@ pub const Interpreter = struct {
                 };
             },
             .grouping => |g| {
-                return self.evaluateExpression(g.*);
+                return self.evaluateExpression(g.*, output);
             },
             .logical => |l| {
-                const left = try self.evaluateExpression(l.left.*);
+                var left = try self.evaluateExpression(l.left.*, output);
 
                 if (l.operator.type_ == token.Type.and_) {
                     if (!left.isTruthy()) return left;
@@ -270,10 +320,11 @@ pub const Interpreter = struct {
                     if (left.isTruthy()) return left;
                 }
 
-                return self.evaluateExpression(l.right.*);
+                left.deinit(self.allocator);
+                return self.evaluateExpression(l.right.*, output);
             },
             .unary => |u| {
-                var right = try self.evaluateExpression(u.right.*);
+                var right = try self.evaluateExpression(u.right.*, output);
                 defer right.deinit(self.allocator);
 
                 if (u.operator.type_ == token.Type.bang) {
@@ -294,35 +345,47 @@ pub const Interpreter = struct {
                 return RuntimError.Unimplemented;
             },
             .binary => |binary| {
-                return self.evaluateBinary(binary);
+                return self.evaluateBinary(binary, output);
             },
             .variable => |variable| {
                 return self.getVariable(variable);
             },
             .assign => |assignment| {
-                return self.evaluateAssignment(assignment);
+                return self.evaluateAssignment(assignment, output);
             },
             .call => |call| {
-                const callee = try self.evaluateExpression(call.callee.*);
+                var callee = try self.evaluateExpression(call.callee.*, output);
                 var arguments = std.ArrayList(Value).init(self.allocator);
-                defer arguments.deinit();
+                defer {
+                    for (arguments.items) |*item| {
+                        item.deinit(self.allocator);
+                    }
+                    arguments.deinit();
+                    callee.deinit(self.allocator);
+                }
 
                 for (call.arguments.items) |arg| {
-                    try arguments.append(try self.evaluateExpression(arg));
+                    try arguments.append(try self.evaluateExpression(arg, output));
                 }
-                return callee.call(arguments.items) catch |err| {
-                    self.diagnostic = Diagnostic{
-                        .token_ = call.closing_paren,
-                        .message = "",
-                    };
-                    if (err == ValueError.NonCallable) {
-                        self.diagnostic.?.message = "can only call functions and classes.";
-                    } else if (err == ValueError.Arity) {
-                        // TODO: better reporting with the expected argument count and received argument count.
-                        self.diagnostic.?.message = "wrong number of arguments for function or class.";
-                    }
-                    return RuntimError.InvalidCall;
-                };
+                if (callee.call(arguments.items, self, output)) |value| {
+                    return value;
+                } else |err| switch (err) {
+                    ValueError.NonCallable => {
+                        self.diagnostic = Diagnostic{
+                            .token_ = call.closing_paren,
+                            .message = "can only call functions and classes.",
+                        };
+                        return RuntimError.InvalidCall;
+                    },
+                    ValueError.Arity => {
+                        self.diagnostic = Diagnostic{
+                            .token_ = call.closing_paren,
+                            .message = "can only call functions and classes.",
+                        };
+                        return RuntimError.InvalidCall;
+                    },
+                    else => |runtime_error| return runtime_error,
+                }
             },
         }
 
@@ -330,15 +393,7 @@ pub const Interpreter = struct {
     }
 
     fn getVariable(self: *Self, variable: token.Token) RuntimError!Value {
-        var environment_index = self.environments.items.len;
-        const val = found: while (environment_index > 0) {
-            environment_index -= 1;
-            const val = self.environments.items[environment_index].get(variable, self.allocator);
-            if (val != null) {
-                break :found val;
-            }
-        } else null;
-
+        const val = self.active_environment.get(variable, self.allocator);
         if (val == null) {
             self.diagnostic = Diagnostic{
                 .token_ = variable,
@@ -350,9 +405,9 @@ pub const Interpreter = struct {
         return val.?;
     }
 
-    fn evaluateBinary(self: *Self, binary: ast.Binary) RuntimError!Value {
-        var left = try self.evaluateExpression(binary.left.*);
-        var right = try self.evaluateExpression(binary.right.*);
+    fn evaluateBinary(self: *Self, binary: ast.Binary, output: std.fs.File.Writer) RuntimError!Value {
+        var left = try self.evaluateExpression(binary.left.*, output);
+        var right = try self.evaluateExpression(binary.right.*, output);
         defer left.deinit(self.allocator);
         defer right.deinit(self.allocator);
 
@@ -407,34 +462,26 @@ pub const Interpreter = struct {
         return RuntimError.Unimplemented;
     }
 
-    fn evaluateAssignment(self: *Self, expr: ast.Assignment) RuntimError!Value {
-        var value = try self.evaluateExpression(expr.value.*);
+    fn evaluateAssignment(self: *Self, expr: ast.Assignment, output: std.fs.File.Writer) RuntimError!Value {
+        var value = try self.evaluateExpression(expr.value.*, output);
 
-        var environment_index = self.environments.items.len;
-        while (environment_index > 0) {
-            environment_index -= 1;
-            var current_environment = &self.environments.items[environment_index];
-            current_environment.assign(expr.name, value) catch |err| {
-                switch (err) {
-                    // Go up one level in the environment chain.
-                    enviroment.EnvironmentError.VariableNotFound => {
-                        continue;
-                    },
-                    enviroment.EnvironmentError.OutOfMemory => {
-                        return RuntimError.OutOfMemory;
-                    },
-                }
-            };
-
-            // Assignment was successfull so we can return the value
-            return value;
-        }
-
-        // No assignment possible so we report an error.
-        self.diagnostic = Diagnostic{
-            .token_ = expr.name,
-            .message = "is an undefined variable.",
+        self.active_environment.assign(expr.name, value) catch |err| {
+            switch (err) {
+                // Go up one level in the environment chain.
+                environment.EnvironmentError.VariableNotFound => {
+                    // No assignment possible so we report an error.
+                    self.diagnostic = Diagnostic{
+                        .token_ = expr.name,
+                        .message = "is an undefined variable.",
+                    };
+                    return RuntimError.UndefinedVariable;
+                },
+                environment.EnvironmentError.OutOfMemory => {
+                    return RuntimError.OutOfMemory;
+                },
+            }
         };
-        return RuntimError.UndefinedVariable;
+
+        return value;
     }
 };
