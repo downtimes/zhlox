@@ -446,7 +446,7 @@ pub const Ast = struct {
         return new_ast;
     }
 
-    pub fn deinit(self: Self) void {
+    pub fn deinit(self: *Self) void {
         const parent_alloc = self.arena.child_allocator;
         self.arena.deinit();
         parent_alloc.destroy(self.arena);

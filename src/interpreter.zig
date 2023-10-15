@@ -16,6 +16,7 @@ const Builtin = struct {
 
 const Function = struct {
     declaration: ast.Ast,
+    closure: environment.Environment,
 
     fn function(self: Function) ast.Function {
         // We know the only statement in the ast is the function itself. The function statement is always present.
@@ -36,7 +37,10 @@ pub const Value = union(enum) {
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .string => |s| allocator.free(s),
-            .function => |f| f.declaration.deinit(),
+            .function => |*f| {
+                f.declaration.deinit();
+                f.closure.deinit();
+            },
             else => {},
         }
     }
@@ -53,14 +57,15 @@ pub const Value = union(enum) {
             },
             .function => |f| {
                 result.function.declaration = try f.declaration.clone(allocator);
+                result.function.closure = try f.closure.clone(allocator);
             },
             else => {},
         }
         return result;
     }
 
-    fn call(self: Self, arguments: []Value, interpreter: *Interpreter, output: std.fs.File.Writer) CallError!Value {
-        switch (self) {
+    fn call(self: *Self, arguments: []Value, interpreter: *Interpreter, output: std.fs.File.Writer) CallError!Value {
+        switch (self.*) {
             .string, .number, .bool_, .nil => return ValueError.NonCallable,
             .builtin => |f| {
                 if (f.arity != arguments.len) {
@@ -68,13 +73,20 @@ pub const Value = union(enum) {
                 }
                 return f.function(arguments);
             },
-            .function => |f| {
+            .function => |*f| {
                 const func = f.function();
                 if (func.params.items.len != arguments.len) {
                     return ValueError.Arity;
                 }
 
-                var new_env = environment.Environment.init_with_parent(interpreter.allocator, &interpreter.global_environment);
+                // Hack for recursive functions for now.
+                var value = f.closure.get(func.name, interpreter.allocator);
+                if (value == null) {
+                    try f.closure.define(func.name.lexeme, self.*);
+                } else {
+                    value.?.deinit(interpreter.allocator);
+                }
+                var new_env = environment.Environment.init_with_parent(interpreter.allocator, &f.closure);
                 defer new_env.deinit();
 
                 for (func.params.items, arguments) |param, argument| {
@@ -98,7 +110,7 @@ pub const Value = union(enum) {
         }
     }
 
-    fn equal(self: Self, other: Self) bool {
+    pub fn equal(self: Self, other: Self) bool {
         switch (self) {
             .bool_ => |b1| {
                 switch (other) {
@@ -132,7 +144,9 @@ pub const Value = union(enum) {
             },
             .function => |f1| {
                 switch (other) {
-                    .function => |f2| return f1.declaration.equals(f2.declaration),
+                    .function => |f2| {
+                        return f1.declaration.equals(f2.declaration) and f1.closure.equals(f2.closure);
+                    },
                     else => return false,
                 }
             },
@@ -208,7 +222,7 @@ pub const Interpreter = struct {
                     _ = try output.write("Hit unimplemented part of the interpreter.");
                 } else {
                     const diagnostic = self.diagnostic.?;
-                    main.reportError(diagnostic.token_.line, &[_][]const u8{ "Runtime Error:", diagnostic.token_.lexeme, " ", diagnostic.message });
+                    main.reportError(diagnostic.token_.line, &[_][]const u8{ "Runtime Error: ", diagnostic.token_.lexeme, " ", diagnostic.message });
                 }
                 return err;
             };
@@ -294,10 +308,10 @@ pub const Interpreter = struct {
                 return try self.executeBlock(statements.items, &new_env, output);
             },
             .function => |f| {
-                const body = try ast.Ast.from(f, self.allocator);
+                var body = try ast.Ast.from(f, self.allocator);
                 defer body.deinit();
 
-                const function = Function{ .declaration = body };
+                const function = Function{ .declaration = body, .closure = self.active_environment.* };
                 // TODO do I also want to allow functions to be shadowed? This could potentially be confusing no?
                 //      Probably needed though for proper compatibility with lox.
                 try self.active_environment.define(f.name.lexeme, Value{ .function = function });

@@ -13,11 +13,8 @@ pub const Environment = struct {
 
     // Parent environment must be valid as long as this environment is used.
     pub fn init_with_parent(allocator: std.mem.Allocator, parent: *Environment) Self {
-        const env = Environment{
-            .parent = parent,
-            .allocator = allocator,
-            .values = std.StringHashMapUnmanaged(interpreter.Value){},
-        };
+        var env = init(allocator);
+        env.parent = parent;
         return env;
     }
 
@@ -28,6 +25,33 @@ pub const Environment = struct {
             .values = std.StringHashMapUnmanaged(interpreter.Value){},
         };
         return env;
+    }
+
+    pub fn equals(self: Self, other: Self) bool {
+        if (self.values.count() != other.values.count()) {
+            return false;
+        }
+
+        var iter = self.values.iterator();
+        while (iter.next()) |elem| {
+            const o = other.values.getPtr(elem.key_ptr.*) orelse return false;
+            if (!elem.value_ptr.*.equal(o.*)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    pub fn clone(self: Self, allocator: std.mem.Allocator) !Self {
+        var new_env = init(allocator);
+        errdefer new_env.deinit();
+
+        new_env.parent = self.parent;
+        var iter = self.values.iterator();
+        while (iter.next()) |elem| {
+            try new_env.define(elem.key_ptr.*, elem.value_ptr.*);
+        }
+        return new_env;
     }
 
     pub fn deinit(self: *Self) void {
