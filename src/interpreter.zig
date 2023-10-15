@@ -17,9 +17,9 @@ const Builtin = struct {
 const Function = struct {
     declaration: ast.Ast,
 
-    fn function(self: Function) Function {
+    fn function(self: Function) ast.Function {
         // We know the only statement in the ast is the function itself. The function statement is always present.
-        return self.declaration.statements[0].function;
+        return self.declaration.statements.items[0].function;
     }
 };
 
@@ -131,9 +131,9 @@ pub const Value = union(enum) {
                     else => return false,
                 }
             },
-            .function => |_| {
+            .function => |f1| {
                 switch (other) {
-                    .function => return false, //TODO think about when two functions should be equal.
+                    .function => |f2| return f1.declaration.equals(f2.declaration),
                     else => return false,
                 }
             },

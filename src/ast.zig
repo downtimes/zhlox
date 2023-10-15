@@ -8,6 +8,10 @@ pub const Binary = struct {
     operator: token.Token,
     right: *Expr,
 
+    fn equals(self: Binary, other: Binary) bool {
+        return self.left.equals(other.left.*) and self.operator.type_ == other.operator.type_ and self.right.equals(other.right.*);
+    }
+
     fn clone(self: Binary, allocator: Allocator) Allocator.Error!Binary {
         const new_left = try allocator.create(Expr);
         new_left.* = try self.left.clone(allocator);
@@ -25,6 +29,10 @@ pub const Unary = struct {
     operator: token.Token,
     right: *Expr,
 
+    fn equals(self: Unary, other: Unary) bool {
+        return self.operator.type_ == other.operator.type_ and self.right.equals(other.right.*);
+    }
+
     fn clone(self: Unary, allocator: Allocator) Allocator.Error!Unary {
         const new_right = try allocator.create(Expr);
         new_right.* = try self.right.clone(allocator);
@@ -39,6 +47,26 @@ pub const Function = struct {
     name: token.Token,
     params: std.ArrayListUnmanaged(token.Token),
     body: std.ArrayListUnmanaged(Stmt),
+
+    fn equals(self: Function, other: Function) bool {
+        if (self.params.items.len != other.params.items.len) {
+            return false;
+        }
+        if (self.body.items.len != other.body.items.len) {
+            return false;
+        }
+        for (self.params.items, other.params.items) |s, o| {
+            if (!std.mem.eql(u8, s.lexeme, o.lexeme)) {
+                return false;
+            }
+        }
+        for (self.body.items, other.body.items) |s, o| {
+            if (!s.equals(o)) {
+                return false;
+            }
+        }
+        return std.mem.eql(u8, self.name.lexeme, other.name.lexeme);
+    }
 
     fn clone(self: Function, allocator: Allocator) Allocator.Error!Function {
         var new_params = try self.params.clone(allocator);
@@ -63,6 +91,18 @@ pub const Call = struct {
     closing_paren: token.Token, // Used for error reporting line numbers.
     arguments: std.ArrayListUnmanaged(Expr),
 
+    fn equals(self: Call, other: Call) bool {
+        if (self.arguments.items.len != other.arguments.items.len) {
+            return false;
+        }
+        for (self.arguments.items, other.arguments.items) |s, o| {
+            if (!s.equals(o)) {
+                return false;
+            }
+        }
+        return self.callee.equals(other.callee.*) and self.closing_paren.type_ == other.closing_paren.type_;
+    }
+
     fn clone(self: Call, allocator: Allocator) Allocator.Error!Call {
         const new_callee = try allocator.create(Expr);
         new_callee.* = try self.callee.clone(allocator);
@@ -84,6 +124,27 @@ pub const Literal = union(enum) {
     bool_: bool,
     nil: void,
 
+    fn equals(self: Literal, other: Literal) bool {
+        return switch (self) {
+            .number => |n| switch (other) {
+                .number => |n2| return n == n2,
+                else => return false,
+            },
+            .bool_ => |b| switch (other) {
+                .bool_ => |b2| return b == b2,
+                else => return false,
+            },
+            .nil => switch (other) {
+                .nil => return true,
+                else => return false,
+            },
+            .string => |s| switch (other) {
+                .string => |s2| return std.mem.eql(u8, s, s2),
+                else => return false,
+            },
+        };
+    }
+
     fn clone(self: Literal, allocator: Allocator) Allocator.Error!Literal {
         return switch (self) {
             .string => |s| Literal{ .string = try allocator.dupe(u8, s) },
@@ -95,6 +156,10 @@ pub const Literal = union(enum) {
 pub const Assignment = struct {
     name: token.Token,
     value: *Expr,
+
+    fn equals(self: Assignment, other: Assignment) bool {
+        return std.mem.eql(u8, self.name.lexeme, other.name.lexeme) and self.value.equals(other.value.*);
+    }
 
     fn clone(self: Assignment, allocator: Allocator) Allocator.Error!Assignment {
         const new_value = try allocator.create(Expr);
@@ -109,6 +174,20 @@ pub const Assignment = struct {
 pub const VariableDeclaration = struct {
     name: token.Token,
     initializer: ?Expr,
+
+    fn equals(self: VariableDeclaration, other: VariableDeclaration) bool {
+        if (self.initializer) |sint| {
+            const oint = other.initializer orelse return false;
+            if (!sint.equals(oint)) {
+                return false;
+            }
+        }
+        if (self.initializer == null and other.initializer != null) {
+            return false;
+        }
+
+        return std.mem.eql(u8, self.name.lexeme, other.name.lexeme);
+    }
 
     fn clone(self: VariableDeclaration, allocator: Allocator) Allocator.Error!VariableDeclaration {
         var new_initializer: ?Expr = null;
@@ -126,6 +205,21 @@ pub const Conditional = struct {
     condition: Expr,
     then: *Stmt,
     els: ?*Stmt,
+
+    fn equals(self: Conditional, other: Conditional) bool {
+        // TODO can we make this check for two optionals more succinct?
+        if (self.els) |sels| {
+            const oels = other.els orelse return false;
+            if (!sels.equals(oels.*)) {
+                return false;
+            }
+        }
+        if (self.els == null and other.els != null) {
+            return false;
+        }
+
+        return self.condition.equals(other.condition) and self.then.equals(other.then.*);
+    }
 
     fn clone(self: Conditional, allocator: Allocator) Allocator.Error!Conditional {
         const new_then = try allocator.create(Stmt);
@@ -148,6 +242,10 @@ pub const Logical = struct {
     operator: token.Token,
     right: *Expr,
 
+    fn equals(self: Logical, other: Logical) bool {
+        return self.left.equals(other.left.*) and self.operator.type_ == other.operator.type_ and self.right.equals(other.right.*);
+    }
+
     fn clone(self: Logical, allocator: Allocator) Allocator.Error!Logical {
         const new_left = try allocator.create(Expr);
         new_left.* = try self.left.clone(allocator);
@@ -165,6 +263,10 @@ pub const WhileStmt = struct {
     condition: Expr,
     body: *Stmt,
 
+    fn equals(self: WhileStmt, other: WhileStmt) bool {
+        return self.condition.equals(other.condition) and self.body.equals(other.body.*);
+    }
+
     fn clone(self: WhileStmt, allocator: Allocator) Allocator.Error!WhileStmt {
         const new_body = try allocator.create(Stmt);
         new_body.* = try self.body.clone(allocator);
@@ -180,6 +282,31 @@ pub const Stmt = union(enum) {
     var_decl: VariableDeclaration,
     function: Function,
     block: std.ArrayListUnmanaged(Stmt),
+
+    fn equals(self: Stmt, other: Stmt) bool {
+        return switch (self) {
+            .block => |b| {
+                switch (other) {
+                    .block => |other_b| {
+                        if (b.items.len != other_b.items.len) {
+                            return false;
+                        }
+                        for (b.items, other_b.items) |statement, other_statement| {
+                            if (!statement.equals(other_statement)) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    },
+                    else => return false,
+                }
+            },
+            inline else => |s, tag| switch (other) {
+                tag => |o| return s.equals(o),
+                else => return false,
+            },
+        };
+    }
 
     fn clone(self: Stmt, allocator: Allocator) Allocator.Error!Stmt {
         return switch (self) {
@@ -209,6 +336,23 @@ pub const Expr = union(enum) {
     call: Call,
     variable: token.Token,
     assign: Assignment,
+
+    fn equals(self: Expr, other: Expr) bool {
+        return switch (self) {
+            .grouping => |g| switch (other) {
+                .grouping => |og| return g.equals(og.*),
+                else => return false,
+            },
+            .variable => |v| switch (other) {
+                .variable => |ov| return std.mem.eql(u8, v.lexeme, ov.lexeme),
+                else => return false,
+            },
+            inline else => |s, tag| switch (other) {
+                tag => |o| return s.equals(o),
+                else => return false,
+            },
+        };
+    }
 
     fn clone(self: Expr, allocator: Allocator) Allocator.Error!Expr {
         return switch (self) {
@@ -242,6 +386,18 @@ pub const Ast = struct {
         const function_copy = try function.clone(new_ast.arena.allocator());
         try new_ast.append(Stmt{ .function = function_copy });
         return new_ast;
+    }
+
+    pub fn equals(self: Self, other: Self) bool {
+        if (self.statements.items.len != other.statements.items.len) {
+            return false;
+        }
+        for (self.statements.items, other.statements.items) |own_statement, other_statement| {
+            if (!own_statement.equals(other_statement)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     pub fn init(allocator: Allocator) !Self {
