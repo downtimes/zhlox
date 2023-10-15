@@ -13,5 +13,11 @@ print add; // "<fn add>".
 fun sayHi(first, last) {
   print "Hi, " + first + " " + last + "!";
 }
-
 sayHi("Dear", "Reader");
+
+// Functions can be shadowed like variables which might be surprising.
+fun count(n) {
+  if (n > 1) count(n - 1);
+  print n;
+}
+count(3);

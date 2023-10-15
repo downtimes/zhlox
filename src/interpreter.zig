@@ -81,8 +81,7 @@ pub const Value = union(enum) {
                     try new_env.define(param.lexeme, argument);
                 }
 
-                try interpreter.executeBlock(func.body.items, &new_env, output);
-                return Value.nil;
+                return try interpreter.executeBlock(func.body.items, &new_env, output);
             },
         }
     }
@@ -161,6 +160,7 @@ pub const Diagnostic = struct {
     message: []const u8,
 };
 
+// TODO give the user feedback when he tries to use return statement outside of function.
 pub const Interpreter = struct {
     const Self = @This();
 
@@ -203,7 +203,7 @@ pub const Interpreter = struct {
 
     fn execute(self: *Self, statements: []ast.Stmt, output: std.fs.File.Writer) RuntimError!void {
         for (statements) |stmt| {
-            self.executeStatement(stmt, output) catch |err| {
+            var value = self.executeStatement(stmt, output) catch |err| {
                 if (err == RuntimError.Unimplemented) {
                     _ = try output.write("Hit unimplemented part of the interpreter.");
                 } else {
@@ -212,28 +212,33 @@ pub const Interpreter = struct {
                 }
                 return err;
             };
+            value.deinit(self.allocator);
         }
     }
 
-    fn executeBlock(self: *Self, statements: []ast.Stmt, env: *environment.Environment, output: std.fs.File.Writer) RuntimError!void {
+    fn executeBlock(self: *Self, statements: []ast.Stmt, env: *environment.Environment, output: std.fs.File.Writer) RuntimError!Value {
         const previous_environment = self.active_environment;
         defer self.active_environment = previous_environment;
 
         self.active_environment = env;
         for (statements) |statement| {
-            try self.executeStatement(statement, output);
+            const val = try self.executeStatement(statement, output);
+            if (val != Value.nil) {
+                return val;
+            }
         }
+        return Value.nil;
     }
 
-    fn executeStatement(self: *Self, stmt: ast.Stmt, output: std.fs.File.Writer) RuntimError!void {
+    fn executeStatement(self: *Self, stmt: ast.Stmt, output: std.fs.File.Writer) RuntimError!Value {
         switch (stmt) {
             .cond => |c| {
                 var cond = try self.evaluateExpression(c.condition, output);
                 defer cond.deinit(self.allocator);
                 if (cond.isTruthy()) {
-                    try self.executeStatement(c.then.*, output);
+                    return try self.executeStatement(c.then.*, output);
                 } else if (c.els != null) {
-                    try self.executeStatement(c.els.?.*, output);
+                    return try self.executeStatement(c.els.?.*, output);
                 }
             },
             .expr => |e| {
@@ -263,7 +268,10 @@ pub const Interpreter = struct {
                 defer cond.deinit(self.allocator);
 
                 while (cond.isTruthy()) {
-                    try self.executeStatement(w.body.*, output);
+                    const value = try self.executeStatement(w.body.*, output);
+                    if (value != Value.nil) {
+                        return value;
+                    }
                     cond.deinit(self.allocator);
                     cond = try self.evaluateExpression(w.condition, output);
                 }
@@ -283,16 +291,25 @@ pub const Interpreter = struct {
                 var new_env = environment.Environment.init_with_parent(self.allocator, self.active_environment);
                 defer new_env.deinit();
 
-                try self.executeBlock(statements.items, &new_env, output);
+                return try self.executeBlock(statements.items, &new_env, output);
             },
             .function => |f| {
                 const body = try ast.Ast.from(f, self.allocator);
                 defer body.deinit();
 
                 const function = Function{ .declaration = body };
+                // TODO do I also want to allow functions to be shadowed? This could potentially be confusing no?
+                //      Probably needed though for proper compatibility with lox.
                 try self.active_environment.define(f.name.lexeme, Value{ .function = function });
             },
+            .ret => |r| {
+                if (r.value) |val| {
+                    return self.evaluateExpression(val, output);
+                }
+                return Value.nil;
+            },
         }
+        return Value.nil;
     }
 
     fn evaluateExpression(self: *Self, expr: ast.Expr, output: std.fs.File.Writer) RuntimError!Value {

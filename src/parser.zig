@@ -131,6 +131,7 @@ pub const Parser = struct {
         if (self.match(&[_]token.Type{token.Type.for_})) return self.forStatement(allocator);
         if (self.match(&[_]token.Type{token.Type.if_})) return self.ifStatement(allocator);
         if (self.match(&[_]token.Type{token.Type.print})) return self.printStatement(allocator);
+        if (self.match(&[_]token.Type{token.Type.return_})) return self.returnStatement(allocator);
         if (self.match(&[_]token.Type{token.Type.while_})) return self.whileStatement(allocator);
         if (self.match(&[_]token.Type{token.Type.left_brace})) {
             return ast.Stmt{ .block = try self.block(allocator) };
@@ -221,6 +222,16 @@ pub const Parser = struct {
         }
 
         return body;
+    }
+
+    fn returnStatement(self: *Self, allocator: std.mem.Allocator) Stmt {
+        const keyword = self.previous();
+        var value: ?ast.Expr = null;
+        if (!self.check(token.Type.semicolon)) {
+            value = try self.expression(allocator);
+        }
+        try self.consume(token.Type.semicolon, "Expected ';' atfer return.");
+        return ast.Stmt{ .ret = ast.Return{ .keyword = keyword, .value = value } };
     }
 
     fn whileStatement(self: *Self, allocator: std.mem.Allocator) Stmt {

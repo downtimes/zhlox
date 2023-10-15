@@ -274,6 +274,30 @@ pub const WhileStmt = struct {
     }
 };
 
+pub const Return = struct {
+    keyword: token.Token, // Used only for line number reporting
+    value: ?Expr,
+
+    fn equals(self: Return, other: Return) bool {
+        if (self.value) |sval| {
+            const oval = other.value orelse return false;
+            return sval.equals(oval);
+        }
+        return self.value == null and other.value == null;
+    }
+
+    fn clone(self: Return, allocator: Allocator) Allocator.Error!Return {
+        var new_val: ?Expr = null;
+        if (self.value) |val| {
+            new_val = try val.clone(allocator);
+        }
+        return Return{
+            .keyword = try self.keyword.clone(allocator),
+            .value = new_val,
+        };
+    }
+};
+
 pub const Stmt = union(enum) {
     expr: Expr,
     cond: Conditional,
@@ -281,6 +305,7 @@ pub const Stmt = union(enum) {
     while_: WhileStmt,
     var_decl: VariableDeclaration,
     function: Function,
+    ret: Return,
     block: std.ArrayListUnmanaged(Stmt),
 
     fn equals(self: Stmt, other: Stmt) bool {
@@ -323,6 +348,7 @@ pub const Stmt = union(enum) {
                 break :blk Stmt{ .block = new_block };
             },
             .function => |inner| Stmt{ .function = try inner.clone(allocator) },
+            .ret => |inner| Stmt{ .ret = try inner.clone(allocator) },
         };
     }
 };
