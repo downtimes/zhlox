@@ -179,14 +179,14 @@ pub const Parser = struct {
 
         var init: ?ast.Stmt = null;
         if (self.match(&[_]token.Type{token.Type.semicolon})) {
-            // Already null
+            // init already null, nothing to do.
         } else if (self.match(&[_]token.Type{token.Type.var_})) {
             init = try self.variableDeclaration(allocator);
         } else {
             init = try self.expressionStatement(allocator);
         }
 
-        var cond: ?ast.Expr = null;
+        var cond = ast.Expr{ .literal = ast.Literal{ .bool_ = true } };
         if (!self.check(token.Type.semicolon)) {
             cond = try self.expression(allocator);
         }
@@ -200,23 +200,28 @@ pub const Parser = struct {
 
         var body = try self.statement(allocator);
 
-        if (after != null) {
-            var sugar = std.ArrayListUnmanaged(ast.Stmt){};
-            try sugar.append(allocator, body);
-            try sugar.append(allocator, ast.Stmt{ .expr = after.? });
-            body = ast.Stmt{ .block = sugar };
+        if (after) |a| {
+            switch (body) {
+                // The base case is that the body is a block, then we don't have to create a new block to only put the
+                // after in there.
+                .block => |*b| try b.append(allocator, ast.Stmt{ .expr = a }),
+                // Otherwise we have to create a new block so that we can put the after in there.
+                else => {
+                    var sugar = std.ArrayListUnmanaged(ast.Stmt){};
+                    try sugar.append(allocator, body);
+                    try sugar.append(allocator, ast.Stmt{ .expr = a });
+                    body = ast.Stmt{ .block = sugar };
+                },
+            }
         }
 
-        if (cond == null) {
-            cond.? = ast.Expr{ .literal = ast.Literal{ .bool_ = true } };
-        }
-        const old_body = try allocator.create(ast.Stmt);
-        old_body.* = body;
-        body = ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond.?, .body = old_body } };
+        const while_body = try allocator.create(ast.Stmt);
+        while_body.* = body;
+        body = ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = while_body } };
 
-        if (init != null) {
+        if (init) |i| {
             var sugar = std.ArrayListUnmanaged(ast.Stmt){};
-            try sugar.append(allocator, init.?);
+            try sugar.append(allocator, i);
             try sugar.append(allocator, body);
             body = ast.Stmt{ .block = sugar };
         }
