@@ -2,6 +2,8 @@ const std = @import("std");
 const interpreter = @import("interpreter.zig");
 const token = @import("token.zig");
 
+// TODO reference count the enivornments and only delete them if the last reference goes out of scope.
+//      replace function environment with one such reference.
 pub const EnvironmentError = error{ VariableNotFound, OutOfMemory };
 
 pub const Environment = struct {
@@ -77,14 +79,12 @@ pub const Environment = struct {
         }
     }
 
-    pub fn get(self: Self, name: token.Token, outside_allocator: std.mem.Allocator) ?interpreter.Value {
+    pub fn get(self: Self, name: token.Token) ?interpreter.Value {
         const val = self.values.get(name.lexeme);
         if (val) |v| {
-            return v.clone(outside_allocator) catch {
-                return null;
-            };
+            return v;
         } else if (self.parent) |parent| {
-            return parent.get(name, outside_allocator);
+            return parent.get(name);
         }
 
         return null;

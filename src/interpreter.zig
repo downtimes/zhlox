@@ -64,7 +64,7 @@ pub const Value = union(enum) {
         return result;
     }
 
-    fn call(self: *Self, arguments: []Value, interpreter: *Interpreter, output: std.fs.File.Writer) CallError!Value {
+    fn call(self: *Self, arguments: []Value, interpreter: *Interpreter, arena: std.mem.Allocator, output: std.fs.File.Writer) CallError!Value {
         switch (self.*) {
             .string, .number, .bool_, .nil => return ValueError.NonCallable,
             .builtin => |f| {
@@ -80,20 +80,17 @@ pub const Value = union(enum) {
                 }
 
                 // Hack for recursive functions for now.
-                var value = f.closure.get(func.name, interpreter.allocator);
-                if (value == null) {
+                var myself = f.closure.get(func.name);
+                if (myself == null) {
                     try f.closure.define(func.name.lexeme, self.*);
-                } else {
-                    value.?.deinit(interpreter.allocator);
                 }
-                var new_env = environment.Environment.init_with_parent(interpreter.allocator, &f.closure);
-                defer new_env.deinit();
 
+                var new_env = environment.Environment.init_with_parent(arena, &f.closure);
                 for (func.params.items, arguments) |param, argument| {
                     try new_env.define(param.lexeme, argument);
                 }
 
-                return try interpreter.executeBlock(func.body.items, &new_env, output);
+                return try interpreter.executeBlock(func.body.items, &new_env, arena, output);
             },
         }
     }
@@ -217,7 +214,10 @@ pub const Interpreter = struct {
 
     fn execute(self: *Self, statements: []ast.Stmt, output: std.fs.File.Writer) RuntimError!void {
         for (statements) |stmt| {
-            var value = self.executeStatement(stmt, output) catch |err| {
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+
+            _ = self.executeStatement(stmt, arena.allocator(), output) catch |err| {
                 if (err == RuntimError.Unimplemented) {
                     _ = try output.write("Hit unimplemented part of the interpreter.");
                 } else {
@@ -226,44 +226,44 @@ pub const Interpreter = struct {
                 }
                 return err;
             };
-            value.deinit(self.allocator);
         }
     }
 
-    fn executeBlock(self: *Self, statements: []ast.Stmt, env: *environment.Environment, output: std.fs.File.Writer) RuntimError!Value {
+    fn executeBlock(self: *Self, statements: []ast.Stmt, env: *environment.Environment, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimError!Value {
+        var block_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer block_arena.deinit();
+
         const previous_environment = self.active_environment;
         defer self.active_environment = previous_environment;
 
         self.active_environment = env;
         for (statements) |statement| {
-            const val = try self.executeStatement(statement, output);
+            const val = try self.executeStatement(statement, block_arena.allocator(), output);
             if (val != Value.nil) {
-                return val;
+                // We delete our arena for the block before returning so we need to make sure we hoist the value out
+                // to the arena outside of the current block to not get a dangling reference.
+                return val.clone(arena);
             }
         }
         return Value.nil;
     }
 
-    fn executeStatement(self: *Self, stmt: ast.Stmt, output: std.fs.File.Writer) RuntimError!Value {
+    fn executeStatement(self: *Self, stmt: ast.Stmt, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimError!Value {
         switch (stmt) {
             .cond => |c| {
-                var cond = try self.evaluateExpression(c.condition, output);
-                defer cond.deinit(self.allocator);
+                const cond = try self.evaluateExpression(c.condition, arena, output);
                 if (cond.isTruthy()) {
-                    return try self.executeStatement(c.then.*, output);
+                    return try self.executeStatement(c.then.*, arena, output);
                 } else if (c.els != null) {
-                    return try self.executeStatement(c.els.?.*, output);
+                    return try self.executeStatement(c.els.?.*, arena, output);
                 }
             },
             .expr => |e| {
-                var value = try self.evaluateExpression(e, output);
-                defer value.deinit(self.allocator);
+                _ = try self.evaluateExpression(e, arena, output);
             },
             .print => |e| {
                 // TODO do I want to propagate print errors upwards?
-                var value = try self.evaluateExpression(e, output);
-                defer value.deinit(self.allocator);
-
+                const value = try self.evaluateExpression(e, arena, output);
                 switch (value) {
                     .number => |n| try output.print("{d}", .{n}),
                     .string => |s| try output.print("{s}", .{s}),
@@ -278,39 +278,36 @@ pub const Interpreter = struct {
                 _ = try output.write("\n");
             },
             .while_ => |w| {
-                var cond = try self.evaluateExpression(w.condition, output);
-                defer cond.deinit(self.allocator);
+                var cond = try self.evaluateExpression(w.condition, arena, output);
 
                 while (cond.isTruthy()) {
-                    const value = try self.executeStatement(w.body.*, output);
+                    const value = try self.executeStatement(w.body.*, arena, output);
                     if (value != Value.nil) {
                         return value;
                     }
-                    cond.deinit(self.allocator);
-                    cond = try self.evaluateExpression(w.condition, output);
+                    cond = try self.evaluateExpression(w.condition, arena, output);
                 }
             },
             .var_decl => |decl| {
                 var val: Value = Value.nil;
-                defer val.deinit(self.allocator);
-
                 if (decl.initializer) |initializer| {
-                    val = try self.evaluateExpression(initializer, output);
+                    val = try self.evaluateExpression(initializer, arena, output);
                 }
 
                 try self.active_environment.define(decl.name.lexeme, val);
             },
             .block => |statements| {
                 // Open new environment for each nested block.
-                var new_env = environment.Environment.init_with_parent(self.allocator, self.active_environment);
+                var new_env = environment.Environment.init_with_parent(arena, self.active_environment);
                 defer new_env.deinit();
 
-                return try self.executeBlock(statements.items, &new_env, output);
+                const value = try self.executeBlock(statements.items, &new_env, arena, output);
+                if (value != Value.nil) {
+                    return value;
+                }
             },
             .function => |f| {
-                var body = try ast.Ast.from(f, self.allocator);
-                defer body.deinit();
-
+                const body = try ast.Ast.from(f, arena);
                 const function = Function{ .declaration = body, .closure = self.active_environment.* };
                 // TODO do I also want to allow functions to be shadowed? This could potentially be confusing no?
                 //      Probably needed though for proper compatibility with lox.
@@ -318,7 +315,7 @@ pub const Interpreter = struct {
             },
             .ret => |r| {
                 if (r.value) |val| {
-                    return self.evaluateExpression(val, output);
+                    return self.evaluateExpression(val, arena, output);
                 }
                 return Value.nil;
             },
@@ -326,24 +323,23 @@ pub const Interpreter = struct {
         return Value.nil;
     }
 
-    fn evaluateExpression(self: *Self, expr: ast.Expr, output: std.fs.File.Writer) RuntimError!Value {
+    fn evaluateExpression(self: *Self, expr: ast.Expr, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimError!Value {
         switch (expr) {
             .literal => |l| {
                 return switch (l) {
                     .bool_ => |b| Value{ .bool_ = b },
                     .number => |n| Value{ .number = n },
                     .string => |s| blk: {
-                        var owned_string = try self.allocator.dupe(u8, s);
-                        break :blk Value{ .string = owned_string };
+                        break :blk Value{ .string = s };
                     },
                     .nil => Value.nil,
                 };
             },
             .grouping => |g| {
-                return self.evaluateExpression(g.*, output);
+                return self.evaluateExpression(g.*, arena, output);
             },
             .logical => |l| {
-                var left = try self.evaluateExpression(l.left.*, output);
+                const left = try self.evaluateExpression(l.left.*, arena, output);
 
                 if (l.operator.type_ == token.Type.and_) {
                     if (!left.isTruthy()) return left;
@@ -351,12 +347,10 @@ pub const Interpreter = struct {
                     if (left.isTruthy()) return left;
                 }
 
-                left.deinit(self.allocator);
-                return self.evaluateExpression(l.right.*, output);
+                return self.evaluateExpression(l.right.*, arena, output);
             },
             .unary => |u| {
-                var right = try self.evaluateExpression(u.right.*, output);
-                defer right.deinit(self.allocator);
+                const right = try self.evaluateExpression(u.right.*, arena, output);
 
                 if (u.operator.type_ == token.Type.bang) {
                     return Value{ .bool_ = !right.isTruthy() };
@@ -376,29 +370,23 @@ pub const Interpreter = struct {
                 return RuntimError.Unimplemented;
             },
             .binary => |binary| {
-                return self.evaluateBinary(binary, output);
+                return self.evaluateBinary(binary, arena, output);
             },
             .variable => |variable| {
                 return self.getVariable(variable);
             },
             .assign => |assignment| {
-                return self.evaluateAssignment(assignment, output);
+                return self.evaluateAssignment(assignment, arena, output);
             },
             .call => |call| {
-                var callee = try self.evaluateExpression(call.callee.*, output);
-                var arguments = std.ArrayList(Value).init(self.allocator);
-                defer {
-                    for (arguments.items) |*item| {
-                        item.deinit(self.allocator);
-                    }
-                    arguments.deinit();
-                    callee.deinit(self.allocator);
-                }
+                var callee = try self.evaluateExpression(call.callee.*, arena, output);
+                var arguments = std.ArrayList(Value).init(arena);
 
                 for (call.arguments.items) |arg| {
-                    try arguments.append(try self.evaluateExpression(arg, output));
+                    try arguments.append(try self.evaluateExpression(arg, arena, output));
                 }
-                if (callee.call(arguments.items, self, output)) |value| {
+
+                if (callee.call(arguments.items, self, arena, output)) |value| {
                     return value;
                 } else |err| switch (err) {
                     ValueError.NonCallable => {
@@ -424,7 +412,7 @@ pub const Interpreter = struct {
     }
 
     fn getVariable(self: *Self, variable: token.Token) RuntimError!Value {
-        const val = self.active_environment.get(variable, self.allocator);
+        const val = self.active_environment.get(variable);
         if (val == null) {
             self.diagnostic = Diagnostic{
                 .token_ = variable,
@@ -436,11 +424,9 @@ pub const Interpreter = struct {
         return val.?;
     }
 
-    fn evaluateBinary(self: *Self, binary: ast.Binary, output: std.fs.File.Writer) RuntimError!Value {
-        var left = try self.evaluateExpression(binary.left.*, output);
-        var right = try self.evaluateExpression(binary.right.*, output);
-        defer left.deinit(self.allocator);
-        defer right.deinit(self.allocator);
+    fn evaluateBinary(self: *Self, binary: ast.Binary, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimError!Value {
+        const left = try self.evaluateExpression(binary.left.*, arena, output);
+        const right = try self.evaluateExpression(binary.right.*, arena, output);
 
         if (@as(std.meta.Tag(Value), left) == .number and @as(std.meta.Tag(Value), right) == .number) {
             switch (binary.operator.type_) {
@@ -463,7 +449,7 @@ pub const Interpreter = struct {
 
         if (@as(std.meta.Tag(Value), left) == .string and @as(std.meta.Tag(Value), right) == .string) {
             if (binary.operator.type_ == .plus) {
-                const combined = try std.mem.concat(self.allocator, u8, &[_][]const u8{ left.string, right.string });
+                const combined = try std.mem.concat(arena, u8, &[_][]const u8{ left.string, right.string });
                 return Value{ .string = combined };
             }
         }
@@ -493,8 +479,8 @@ pub const Interpreter = struct {
         return RuntimError.Unimplemented;
     }
 
-    fn evaluateAssignment(self: *Self, expr: ast.Assignment, output: std.fs.File.Writer) RuntimError!Value {
-        var value = try self.evaluateExpression(expr.value.*, output);
+    fn evaluateAssignment(self: *Self, expr: ast.Assignment, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimError!Value {
+        const value = try self.evaluateExpression(expr.value.*, arena, output);
 
         self.active_environment.assign(expr.name, value) catch |err| {
             switch (err) {
