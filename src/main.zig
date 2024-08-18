@@ -46,9 +46,9 @@ fn runFile(path: [:0]const u8, allocator: std.mem.Allocator) !void {
 }
 
 pub fn main() !void {
-    var gba = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gba.deinit();
-    var args = try std.process.argsWithAllocator(gba.allocator());
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    var args = try std.process.argsWithAllocator(gpa.allocator());
     defer args.deinit();
 
     //skip over our own programm name.
@@ -56,10 +56,10 @@ pub fn main() !void {
 
     const path = args.next();
     if (path == null) {
-        try runRepl(gba.allocator());
+        try runRepl(gpa.allocator());
     } else if (args.next() != null) {
         _ = try std.io.getStdOut().write("Usage: zhlox [script]");
     } else {
-        try runFile(path.?, gba.allocator());
+        try runFile(path.?, gpa.allocator());
     }
 }

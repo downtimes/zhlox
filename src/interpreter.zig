@@ -80,7 +80,7 @@ pub const Value = union(enum) {
                 }
 
                 // Hack for recursive functions for now.
-                var myself = f.closure.get(func.name);
+                const myself = f.closure.get(func.name);
                 if (myself == null) {
                     try f.closure.define(func.name.lexeme, self.*);
                 }

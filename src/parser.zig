@@ -145,7 +145,7 @@ pub const Parser = struct {
         const condition = try self.expression(allocator);
         try self.consume(token.Type.right_paren, "Expected ')' after the if condition.");
 
-        var then = try allocator.create(ast.Stmt);
+        const then = try allocator.create(ast.Stmt);
         then.* = try self.statement(allocator);
         var els: ?*ast.Stmt = null;
         if (self.match(&[_]token.Type{token.Type.else_})) {

@@ -69,11 +69,11 @@ pub const Function = struct {
     }
 
     fn clone(self: Function, allocator: Allocator) Allocator.Error!Function {
-        var new_params = try self.params.clone(allocator);
+        const new_params = try self.params.clone(allocator);
         for (new_params.items, self.params.items) |*new, old| {
             new.* = try old.clone(allocator);
         }
-        var new_body = try self.body.clone(allocator);
+        const new_body = try self.body.clone(allocator);
         for (new_body.items, self.body.items) |*new, old| {
             new.* = try old.clone(allocator);
         }
@@ -106,7 +106,7 @@ pub const Call = struct {
     fn clone(self: Call, allocator: Allocator) Allocator.Error!Call {
         const new_callee = try allocator.create(Expr);
         new_callee.* = try self.callee.clone(allocator);
-        var new_arguments = try self.arguments.clone(allocator);
+        const new_arguments = try self.arguments.clone(allocator);
         for (new_arguments.items, self.arguments.items) |*new, old| {
             new.* = try old.clone(allocator);
         }
@@ -341,7 +341,7 @@ pub const Stmt = union(enum) {
             .while_ => |inner| Stmt{ .while_ = try inner.clone(allocator) },
             .var_decl => |inner| Stmt{ .var_decl = try inner.clone(allocator) },
             .block => |inner| blk: {
-                var new_block = try inner.clone(allocator);
+                const new_block = try inner.clone(allocator);
                 for (new_block.items, inner.items) |*new_item, old_item| {
                     new_item.* = try old_item.clone(allocator);
                 }
@@ -427,7 +427,7 @@ pub const Ast = struct {
     }
 
     pub fn init(allocator: Allocator) !Self {
-        var result = Ast{
+        const result = Ast{
             .arena = try allocator.create(std.heap.ArenaAllocator),
             .statements = std.ArrayListUnmanaged(Stmt){},
         };

@@ -2,7 +2,7 @@ const std = @import("std");
 const token = @import("token.zig");
 const main = @import("main.zig");
 
-const reserved_words = std.ComptimeStringMap(token.Type, .{
+const reserved_words = std.StaticStringMap(token.Type).initComptime(.{
     .{ "and", token.Type.and_ },
     .{ "class", token.Type.class },
     .{ "else", token.Type.else_ },
