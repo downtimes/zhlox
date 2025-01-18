@@ -17,7 +17,7 @@ pub const Type = enum {
     equal,
     equal_equal,
     greater,
-    gerater_equal,
+    greater_equal,
     less,
     less_equal,
     identifier,

@@ -1,0 +1,10 @@
+var a = "global";
+{
+  fun showA() {
+    print a; // captures a at declaration point.
+  }
+
+  showA(); // "global"
+  var a = "block"; // local variable does not change the the captured a.
+  showA(); // "global"
+}

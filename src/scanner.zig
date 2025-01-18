@@ -80,7 +80,7 @@ pub const Scanner = struct {
                 try self.addToken(tokens, t, null);
             },
             '>' => {
-                const t = if (self.consumeOnMatch('=')) Type.gerater_equal else Type.greater;
+                const t = if (self.consumeOnMatch('=')) Type.greater_equal else Type.greater;
                 try self.addToken(tokens, t, null);
             },
             '/' => {
@@ -100,7 +100,7 @@ pub const Scanner = struct {
                 }
 
                 if (self.isAtEnd()) {
-                    main.reportError(self.line, &[_][]const u8{"Lex Errror: Unterminated string."});
+                    main.reportError(self.line, &[_][]const u8{"Lex Error: Unterminated string."});
                     return;
                 }
 

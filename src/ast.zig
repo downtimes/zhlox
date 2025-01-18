@@ -401,7 +401,7 @@ pub const Expr = union(enum) {
 pub const Ast = struct {
     const Self = @This();
 
-    arena: *std.heap.ArenaAllocator,
+    arena: std.heap.ArenaAllocator,
     // Expectation is that all sub things of statements are heap allocated into the arena above.
     statements: std.ArrayListUnmanaged(Stmt),
 
@@ -428,11 +428,9 @@ pub const Ast = struct {
 
     pub fn init(allocator: Allocator) !Self {
         const result = Ast{
-            .arena = try allocator.create(std.heap.ArenaAllocator),
+            .arena = std.heap.ArenaAllocator.init(allocator),
             .statements = std.ArrayListUnmanaged(Stmt){},
         };
-        result.arena.* = std.heap.ArenaAllocator.init(allocator);
-
         return result;
     }
 
@@ -447,9 +445,7 @@ pub const Ast = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        const parent_alloc = self.arena.child_allocator;
         self.arena.deinit();
-        parent_alloc.destroy(self.arena);
     }
 
     // Statement must be allocated with the allocator found in this ast.

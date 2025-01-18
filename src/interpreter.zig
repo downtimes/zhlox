@@ -7,7 +7,7 @@ const parser = @import("parser.zig");
 const main = @import("main.zig");
 
 const ValueError = error{ NonCallable, Arity };
-const CallError = ValueError || RuntimError;
+const CallError = ValueError || RuntimeError;
 
 const Builtin = struct {
     arity: u8,
@@ -45,8 +45,8 @@ pub const Value = union(enum) {
         }
     }
 
-    // TODO I'm not happy with the current state of the string handling in my code. Think of a better sheme that
-    //      scales better and isn't as brittle.
+    // TODO I'm not happy with the current state of the string handling in my code.
+    //      Think of a better scheme that scales better and isn't as brittle.
     pub fn clone(self: Self, allocator: std.mem.Allocator) std.mem.Allocator.Error!Self {
         var result = self;
 
@@ -64,7 +64,13 @@ pub const Value = union(enum) {
         return result;
     }
 
-    fn call(self: *Self, arguments: []Value, interpreter: *Interpreter, arena: std.mem.Allocator, output: std.fs.File.Writer) CallError!Value {
+    fn call(
+        self: *Self,
+        arguments: []Value,
+        interpreter: *Interpreter,
+        arena: std.mem.Allocator,
+        output: std.fs.File.Writer,
+    ) CallError!Value {
         switch (self.*) {
             .string, .number, .bool_, .nil => return ValueError.NonCallable,
             .builtin => |f| {
@@ -79,15 +85,15 @@ pub const Value = union(enum) {
                     return ValueError.Arity;
                 }
 
-                // Hack for recursive functions for now.
-                const myself = f.closure.get(func.name);
-                if (myself == null) {
-                    try f.closure.define(func.name.lexeme, self.*);
-                }
-
                 var new_env = environment.Environment.init_with_parent(arena, &f.closure);
                 for (func.params.items, arguments) |param, argument| {
                     try new_env.define(param.lexeme, argument);
+                }
+
+                // TODO: Hack for recursive functions for now.
+                const myself = new_env.get(func.name);
+                if (myself == null) {
+                    try new_env.define(func.name.lexeme, self.*);
                 }
 
                 return try interpreter.executeBlock(func.body.items, &new_env, arena, output);
@@ -157,7 +163,7 @@ fn builtinClock(arguments: []Value) Value {
     return Value{ .number = time };
 }
 
-pub const RuntimError = error{
+pub const RuntimeError = error{
     MinusOperand,
     UndefinedVariable,
     IllegalBinaryOperand,
@@ -212,13 +218,13 @@ pub const Interpreter = struct {
         try self.execute(parse_tree.statements.items, stdout);
     }
 
-    fn execute(self: *Self, statements: []ast.Stmt, output: std.fs.File.Writer) RuntimError!void {
+    fn execute(self: *Self, statements: []ast.Stmt, output: std.fs.File.Writer) RuntimeError!void {
         for (statements) |stmt| {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit();
 
             _ = self.executeStatement(stmt, arena.allocator(), output) catch |err| {
-                if (err == RuntimError.Unimplemented) {
+                if (err == RuntimeError.Unimplemented) {
                     _ = try output.write("Hit unimplemented part of the interpreter.");
                 } else {
                     const diagnostic = self.diagnostic.?;
@@ -229,7 +235,7 @@ pub const Interpreter = struct {
         }
     }
 
-    fn executeBlock(self: *Self, statements: []ast.Stmt, env: *environment.Environment, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimError!Value {
+    fn executeBlock(self: *Self, statements: []ast.Stmt, env: *environment.Environment, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimeError!Value {
         var block_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer block_arena.deinit();
 
@@ -248,7 +254,7 @@ pub const Interpreter = struct {
         return Value.nil;
     }
 
-    fn executeStatement(self: *Self, stmt: ast.Stmt, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimError!Value {
+    fn executeStatement(self: *Self, stmt: ast.Stmt, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimeError!Value {
         switch (stmt) {
             .cond => |c| {
                 const cond = try self.evaluateExpression(c.condition, arena, output);
@@ -308,7 +314,7 @@ pub const Interpreter = struct {
             },
             .function => |f| {
                 const body = try ast.Ast.from(f, arena);
-                const function = Function{ .declaration = body, .closure = self.active_environment.* };
+                const function = Function{ .declaration = body, .closure = try self.active_environment.clone(arena) };
                 // TODO do I also want to allow functions to be shadowed? This could potentially be confusing no?
                 //      Probably needed though for proper compatibility with lox.
                 try self.active_environment.define(f.name.lexeme, Value{ .function = function });
@@ -323,7 +329,7 @@ pub const Interpreter = struct {
         return Value.nil;
     }
 
-    fn evaluateExpression(self: *Self, expr: ast.Expr, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimError!Value {
+    fn evaluateExpression(self: *Self, expr: ast.Expr, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimeError!Value {
         switch (expr) {
             .literal => |l| {
                 return switch (l) {
@@ -365,9 +371,9 @@ pub const Interpreter = struct {
                         .token_ = u.operator,
                         .message = "operand must be a number.",
                     };
-                    return RuntimError.MinusOperand;
+                    return RuntimeError.MinusOperand;
                 }
-                return RuntimError.Unimplemented;
+                return RuntimeError.Unimplemented;
             },
             .binary => |binary| {
                 return self.evaluateBinary(binary, arena, output);
@@ -394,37 +400,37 @@ pub const Interpreter = struct {
                             .token_ = call.closing_paren,
                             .message = "can only call functions and classes.",
                         };
-                        return RuntimError.InvalidCall;
+                        return RuntimeError.InvalidCall;
                     },
                     ValueError.Arity => {
                         self.diagnostic = Diagnostic{
                             .token_ = call.closing_paren,
                             .message = "can only call functions and classes.",
                         };
-                        return RuntimError.InvalidCall;
+                        return RuntimeError.InvalidCall;
                     },
                     else => |runtime_error| return runtime_error,
                 }
             },
         }
 
-        return RuntimError.Unimplemented;
+        return RuntimeError.Unimplemented;
     }
 
-    fn getVariable(self: *Self, variable: token.Token) RuntimError!Value {
+    fn getVariable(self: *Self, variable: token.Token) RuntimeError!Value {
         const val = self.active_environment.get(variable);
         if (val == null) {
             self.diagnostic = Diagnostic{
                 .token_ = variable,
                 .message = "is an undefined variable.",
             };
-            return RuntimError.UndefinedVariable;
+            return RuntimeError.UndefinedVariable;
         }
 
         return val.?;
     }
 
-    fn evaluateBinary(self: *Self, binary: ast.Binary, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimError!Value {
+    fn evaluateBinary(self: *Self, binary: ast.Binary, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimeError!Value {
         const left = try self.evaluateExpression(binary.left.*, arena, output);
         const right = try self.evaluateExpression(binary.right.*, arena, output);
 
@@ -438,7 +444,7 @@ pub const Interpreter = struct {
                 .star => return Value{ .number = left.number * right.number },
                 .plus => return Value{ .number = left.number + right.number },
                 .greater => return Value{ .bool_ = left.number > right.number },
-                .gerater_equal => return Value{ .bool_ = left.number >= right.number },
+                .greater_equal => return Value{ .bool_ = left.number >= right.number },
                 .less => return Value{ .bool_ = left.number < right.number },
                 .less_equal => return Value{ .bool_ = left.number <= right.number },
                 else => {
@@ -457,29 +463,29 @@ pub const Interpreter = struct {
         switch (binary.operator.type_) {
             .equal_equal => return Value{ .bool_ = left.equal(right) },
             .bang_equal => return Value{ .bool_ = !left.equal(right) },
-            .minus, .star, .slash, .less, .less_equal, .greater, .gerater_equal => {
+            .minus, .star, .slash, .less, .less_equal, .greater, .greater_equal => {
                 self.diagnostic = Diagnostic{
                     .token_ = binary.operator,
                     .message = "operands must be numbers.",
                 };
-                return RuntimError.IllegalBinaryOperand;
+                return RuntimeError.IllegalBinaryOperand;
             },
             .plus => {
                 self.diagnostic = Diagnostic{
                     .token_ = binary.operator,
                     .message = "operands must be two numbers or two strings.",
                 };
-                return RuntimError.IllegalBinaryOperand;
+                return RuntimeError.IllegalBinaryOperand;
             },
             else => {
                 // TODO
             },
         }
 
-        return RuntimError.Unimplemented;
+        return RuntimeError.Unimplemented;
     }
 
-    fn evaluateAssignment(self: *Self, expr: ast.Assignment, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimError!Value {
+    fn evaluateAssignment(self: *Self, expr: ast.Assignment, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimeError!Value {
         const value = try self.evaluateExpression(expr.value.*, arena, output);
 
         self.active_environment.assign(expr.name, value) catch |err| {
@@ -491,10 +497,10 @@ pub const Interpreter = struct {
                         .token_ = expr.name,
                         .message = "is an undefined variable.",
                     };
-                    return RuntimError.UndefinedVariable;
+                    return RuntimeError.UndefinedVariable;
                 },
                 environment.EnvironmentError.OutOfMemory => {
-                    return RuntimError.OutOfMemory;
+                    return RuntimeError.OutOfMemory;
                 },
             }
         };

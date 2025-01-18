@@ -2,7 +2,7 @@ const std = @import("std");
 const interpreter = @import("interpreter.zig");
 const token = @import("token.zig");
 
-// TODO reference count the enivornments and only delete them if the last reference goes out of scope.
+// TODO reference count the environments and only delete them if the last reference goes out of scope.
 //      replace function environment with one such reference.
 pub const EnvironmentError = error{ VariableNotFound, OutOfMemory };
 

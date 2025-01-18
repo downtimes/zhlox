@@ -44,7 +44,7 @@ pub const Parser = struct {
         while (!self.isAtEnd()) {
             // Keep going on statement errors. We synchronize to the next statement beginning so that a mistake in
             // one statement should not interfere with parsing another statement. Therefore we give the user
-            // as much information about their errors as possible. If any one error occured we remember it and return
+            // as much information about their errors as possible. If any one error occurred we remember it and return
             // the last error to the caller. Therefore the caller can't execute an invalid syntax tree.
             const decl = self.declaration(result.arena.allocator()) catch |err| {
                 if (err == ParseError.OutOfMemory) return err;
@@ -58,7 +58,7 @@ pub const Parser = struct {
 
                 // In case of invalid assignment the parsing found an error but we are not confused about the state
                 // so we aren't in panic mode and there is no need to synchronize. Synchronization might gloss over
-                // other errors that are usefull for our users.
+                // other errors that are useful for our users.
                 if (err != ParseError.InvalidAssignment) {
                     self.synchronize();
                 }
@@ -107,7 +107,7 @@ pub const Parser = struct {
                 }
             }
         }
-        try self.consume(token.Type.right_paren, "Expcted ')' after parameters.");
+        try self.consume(token.Type.right_paren, "Expected ')' after parameters.");
 
         try self.consume(token.Type.left_brace, "Expected '{' before function body.");
         const body = try self.block(allocator);
@@ -175,7 +175,7 @@ pub const Parser = struct {
     }
 
     fn forStatement(self: *Self, allocator: std.mem.Allocator) Stmt {
-        try self.consume(token.Type.left_paren, "Exppected '(' after 'for'.");
+        try self.consume(token.Type.left_paren, "Expected '(' after 'for'.");
 
         var init: ?ast.Stmt = null;
         if (self.match(&[_]token.Type{token.Type.semicolon})) {
@@ -235,7 +235,7 @@ pub const Parser = struct {
         if (!self.check(token.Type.semicolon)) {
             value = try self.expression(allocator);
         }
-        try self.consume(token.Type.semicolon, "Expected ';' atfer return.");
+        try self.consume(token.Type.semicolon, "Expected ';' after return.");
         return ast.Stmt{ .ret = ast.Return{ .keyword = keyword, .value = value } };
     }
 
@@ -327,7 +327,7 @@ pub const Parser = struct {
     fn comparison(self: *Self, allocator: std.mem.Allocator) Expr {
         var result = try self.term(allocator);
 
-        while (self.match(&[_]token.Type{ token.Type.greater, token.Type.gerater_equal, token.Type.less, token.Type.less_equal })) {
+        while (self.match(&[_]token.Type{ token.Type.greater, token.Type.greater_equal, token.Type.less, token.Type.less_equal })) {
             const operator = self.previous();
             const left = try allocator.create(ast.Expr);
             left.* = result;
@@ -504,7 +504,8 @@ pub const Parser = struct {
     }
 
     fn isAtEnd(self: Self) bool {
-        // Safe since it is guaranteed by our parser that we always have an eof token at the end of our tokenstream.
+        // Safe since it is guaranteed by our parser that we always have an eof
+        // token at the end of our token stream.
         return self.peek().type_ == token.Type.eof;
     }
 };
