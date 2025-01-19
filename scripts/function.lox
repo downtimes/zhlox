@@ -4,22 +4,6 @@ fun count(n) {
 }
 count(3);
 
-fun add(a, b, c) {
-  print a + b + c;
-}
-add(1, 2, 3);
-print add; // "<fn add>".
-
-fun sayHi(first, last) {
-  print "Hi, " + first + " " + last + "!";
-}
-sayHi("Dear", "Reader");
-
-fun procedure() {
-  print "don't return anything";
-}
-var result = procedure();
-print result; // nil
 
 // Functions can be shadowed like variables which might be surprising.
 fun count(n) {

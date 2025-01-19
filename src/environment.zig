@@ -6,60 +6,65 @@ const token = @import("token.zig");
 //      replace function environment with one such reference.
 pub const EnvironmentError = error{ VariableNotFound, OutOfMemory };
 
+// Convention is that all environments are allocated in the global allocator
+// and can therefore live how ever long they should live. Therefore, instead of cloning
+// them you can simply point to any environment at any time.
+// During runtime the environments build a tree structure with the global environment of
+// the interpreter being the root of the tree. When the root deinit is called, all other
+// environments are cleaned up as well.
 pub const Environment = struct {
     const Self = @This();
 
-    parent: ?*Environment,
     allocator: std.mem.Allocator,
-    values: std.StringHashMapUnmanaged(interpreter.Value),
+    parent: ?*Environment,
+    children: std.ArrayList(*Environment),
+    values: std.StringHashMap(interpreter.Value),
 
     // Parent environment must be valid as long as this environment is used.
-    pub fn init_with_parent(allocator: std.mem.Allocator, parent: *Environment) Self {
-        var env = init(allocator);
+    pub fn create_with_parent(allocator: std.mem.Allocator, parent: *Environment) !*Self {
+        var env = try create(allocator);
         env.parent = parent;
+        try parent.children.append(env);
         return env;
     }
 
-    pub fn init(allocator: std.mem.Allocator) Self {
-        const env = Environment{
-            .parent = null,
+    pub fn create(allocator: std.mem.Allocator) !*Self {
+        const env_place = try allocator.create(Self);
+        env_place.* = Environment{
             .allocator = allocator,
-            .values = std.StringHashMapUnmanaged(interpreter.Value){},
+            .parent = null,
+            .children = std.ArrayList(*Environment).init(allocator),
+            .values = std.StringHashMap(interpreter.Value).init(allocator),
         };
-        return env;
-    }
-
-    pub fn equals(self: Self, other: Self) bool {
-        if (self.values.count() != other.values.count()) {
-            return false;
-        }
-
-        var iter = self.values.iterator();
-        while (iter.next()) |elem| {
-            const o = other.values.getPtr(elem.key_ptr.*) orelse return false;
-            if (!elem.value_ptr.*.equal(o.*)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    pub fn clone(self: Self, allocator: std.mem.Allocator) !Self {
-        var new_env = init(allocator);
-        errdefer new_env.deinit();
-
-        new_env.parent = self.parent;
-        new_env.values = try self.values.clone(allocator);
-        return new_env;
+        return env_place;
     }
 
     pub fn deinit(self: *Self) void {
+        // Deinitialize all children.
+        for (self.children.items) |c| {
+            c.deinit();
+        }
+        self.children.deinit();
+
+        // Make sure to remove ourself from our parent node.
+        if (self.parent) |p| {
+            const index = for (0.., p.children.items) |index, elem| {
+                if (elem == self) break index;
+            } else null;
+            if (index) |i| {
+                _ = p.children.swapRemove(i);
+            }
+        }
+
+        // Remove our own data.
         var iter = self.values.iterator();
         while (iter.next()) |elem| {
             self.allocator.free(elem.key_ptr.*);
             elem.value_ptr.*.deinit(self.allocator);
         }
-        self.values.deinit(self.allocator);
+        self.values.deinit();
+
+        self.allocator.destroy(self);
     }
 
     pub fn define(self: *Self, name: []const u8, value: interpreter.Value) !void {
@@ -69,8 +74,9 @@ pub const Environment = struct {
         errdefer owned_value.deinit(self.allocator);
 
         // We allow shadowing of variables by removing entries instead of blocking addition.
-        var old = try self.values.fetchPut(self.allocator, owned_str, owned_value);
+        var old = try self.values.fetchPut(owned_str, owned_value);
         if (old) |*o| {
+            // The hashmap does use the old key so we have to free the new key.
             self.allocator.free(owned_str);
             o.value.deinit(self.allocator);
         }

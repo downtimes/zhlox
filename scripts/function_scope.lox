@@ -1,0 +1,5 @@
+fun scope(a) {
+  var a = "local";
+  print a; //"local"
+}
+scope("test");

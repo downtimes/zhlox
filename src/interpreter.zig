@@ -16,6 +16,7 @@ const Builtin = struct {
 
 const Function = struct {
     declaration: ast.Ast,
+    env: *environment.Environment,
 
     fn function(self: Function) ast.Function {
         // We know the only statement in the ast is the function itself. The function statement is always present.
@@ -77,18 +78,24 @@ pub const Value = union(enum) {
                 return f.function(arguments);
             },
             .function => |*f| {
-                var function_env = environment.Environment.init_with_parent(arena, &interpreter.global_environment);
-
                 const func = f.function();
                 if (func.params.items.len != arguments.len) {
                     return ValueError.Arity;
+                }
+
+                // Don't delete function environments since they might contain function definitions
+                // that capture this environment. They can only be deleted at the end of the
+                // program.
+                var function_env = try environment.Environment.create_with_parent(interpreter.allocator, f.env);
+                if (function_env.parent == f.env.parent) {
+                    @breakpoint();
                 }
 
                 for (func.params.items, arguments) |param, argument| {
                     try function_env.define(param.lexeme, argument);
                 }
 
-                return try interpreter.executeBlock(func.body.items, &function_env, arena, output);
+                return try interpreter.executeBlock(func.body.items, function_env, arena, output);
             },
         }
     }
@@ -140,7 +147,7 @@ pub const Value = union(enum) {
             .function => |f1| {
                 switch (other) {
                     .function => |f2| {
-                        return f1.declaration.equals(f2.declaration);
+                        return f1.declaration.equals(f2.declaration) and (f1.env == f2.env);
                     },
                     else => return false,
                 }
@@ -173,7 +180,7 @@ pub const Diagnostic = struct {
 pub const Interpreter = struct {
     const Self = @This();
 
-    global_environment: environment.Environment,
+    global_environment: *environment.Environment,
     active_environment: *environment.Environment,
     allocator: std.mem.Allocator,
     diagnostic: ?Diagnostic = null,
@@ -185,7 +192,7 @@ pub const Interpreter = struct {
     pub fn new(allocator: std.mem.Allocator) !Self {
         var interpreter = Interpreter{
             .allocator = allocator,
-            .global_environment = environment.Environment.init(allocator),
+            .global_environment = try environment.Environment.create(allocator),
             .active_environment = undefined,
         };
         errdefer interpreter.deinit();
@@ -206,7 +213,7 @@ pub const Interpreter = struct {
         var parse = parser.Parser{ .tokens = tokens.items };
         const parse_tree = try parse.parseInto(arena.allocator());
 
-        self.active_environment = &self.global_environment;
+        self.active_environment = self.global_environment;
         try self.execute(parse_tree.statements.items, stdout);
     }
 
@@ -296,17 +303,17 @@ pub const Interpreter = struct {
             },
             .block => |statements| {
                 // Open new environment for each nested block.
-                var new_env = environment.Environment.init_with_parent(arena, self.active_environment);
+                var new_env = try environment.Environment.create_with_parent(self.allocator, self.active_environment);
                 defer new_env.deinit();
 
-                const value = try self.executeBlock(statements.items, &new_env, arena, output);
+                const value = try self.executeBlock(statements.items, new_env, arena, output);
                 if (value != Value.nil) {
                     return value;
                 }
             },
             .function => |f| {
                 const body = try ast.Ast.from(f, arena);
-                const function = Function{ .declaration = body };
+                const function = Function{ .declaration = body, .env = self.active_environment };
                 // TODO do I also want to allow functions to be shadowed? This could potentially be confusing no?
                 //      Probably needed though for proper compatibility with lox.
                 try self.active_environment.define(f.name.lexeme, Value{ .function = function });
