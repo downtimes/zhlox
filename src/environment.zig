@@ -49,10 +49,7 @@ pub const Environment = struct {
         errdefer new_env.deinit();
 
         new_env.parent = self.parent;
-        var iter = self.values.iterator();
-        while (iter.next()) |elem| {
-            try new_env.define(elem.key_ptr.*, elem.value_ptr.*);
-        }
+        new_env.values = try self.values.clone(allocator);
         return new_env;
     }
 

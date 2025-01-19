@@ -2,6 +2,7 @@ const std = @import("std");
 const token = @import("token.zig");
 const main = @import("main.zig");
 const ast = @import("ast.zig");
+const config = @import("config.zig");
 
 const ParseError = error{ UnexpectedToken, InvalidAssignment, OutOfMemory, TooManyArguments };
 
@@ -98,9 +99,10 @@ pub const Parser = struct {
             while (self.match(&[_]token.Type{token.Type.comma})) {
                 try self.consume(token.Type.identifier, "Expected parameter name.");
                 try params.append(allocator, self.previous());
-                if (params.items.len >= 255) {
+                if (params.items.len >= config.max_params) {
                     self.diagnostic = Diagnostic{
                         .found = self.peek(),
+                        // TODO: replace with constant during compile?
                         .message = "Can't have more than 255 arguments.",
                     };
                     return ParseError.TooManyArguments;
@@ -381,18 +383,18 @@ pub const Parser = struct {
     }
 
     fn call(self: *Self, allocator: std.mem.Allocator) Expr {
-        var result = try self.primary(allocator);
+        var expr = try self.primary(allocator);
 
         // The code is a little more verbose than it needs to be in preparation for more code later down the line.
         while (true) {
             if (self.match(&[_]token.Type{token.Type.left_paren})) {
-                result = try self.finishCall(result, allocator);
+                expr = try self.finishCall(expr, allocator);
             } else {
                 break;
             }
         }
 
-        return result;
+        return expr;
     }
 
     fn finishCall(self: *Self, callee: ast.Expr, allocator: std.mem.Allocator) Expr {
@@ -401,9 +403,10 @@ pub const Parser = struct {
             try arguments.append(allocator, try self.expression(allocator));
             while (self.match(&[_]token.Type{token.Type.comma})) {
                 try arguments.append(allocator, try self.expression(allocator));
-                if (arguments.items.len >= 255) {
+                if (arguments.items.len >= config.max_params) {
                     self.diagnostic = Diagnostic{
                         .found = self.peek(),
+                        // TODO: replace with constant during compile?
                         .message = "Can't have more than 255 arguments.",
                     };
                     return ParseError.TooManyArguments;

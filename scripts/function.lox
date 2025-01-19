@@ -15,6 +15,12 @@ fun sayHi(first, last) {
 }
 sayHi("Dear", "Reader");
 
+fun procedure() {
+  print "don't return anything";
+}
+var result = procedure();
+print result; // nil
+
 // Functions can be shadowed like variables which might be surprising.
 fun count(n) {
   if (n > 1) count(n - 1);

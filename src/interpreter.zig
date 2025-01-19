@@ -16,7 +16,6 @@ const Builtin = struct {
 
 const Function = struct {
     declaration: ast.Ast,
-    closure: environment.Environment,
 
     fn function(self: Function) ast.Function {
         // We know the only statement in the ast is the function itself. The function statement is always present.
@@ -39,7 +38,6 @@ pub const Value = union(enum) {
             .string => |s| allocator.free(s),
             .function => |*f| {
                 f.declaration.deinit();
-                f.closure.deinit();
             },
             else => {},
         }
@@ -57,7 +55,6 @@ pub const Value = union(enum) {
             },
             .function => |f| {
                 result.function.declaration = try f.declaration.clone(allocator);
-                result.function.closure = try f.closure.clone(allocator);
             },
             else => {},
         }
@@ -80,23 +77,18 @@ pub const Value = union(enum) {
                 return f.function(arguments);
             },
             .function => |*f| {
+                var function_env = environment.Environment.init_with_parent(arena, &interpreter.global_environment);
+
                 const func = f.function();
                 if (func.params.items.len != arguments.len) {
                     return ValueError.Arity;
                 }
 
-                var new_env = environment.Environment.init_with_parent(arena, &f.closure);
                 for (func.params.items, arguments) |param, argument| {
-                    try new_env.define(param.lexeme, argument);
+                    try function_env.define(param.lexeme, argument);
                 }
 
-                // TODO: Hack for recursive functions for now.
-                const myself = new_env.get(func.name);
-                if (myself == null) {
-                    try new_env.define(func.name.lexeme, self.*);
-                }
-
-                return try interpreter.executeBlock(func.body.items, &new_env, arena, output);
+                return try interpreter.executeBlock(func.body.items, &function_env, arena, output);
             },
         }
     }
@@ -148,7 +140,7 @@ pub const Value = union(enum) {
             .function => |f1| {
                 switch (other) {
                     .function => |f2| {
-                        return f1.declaration.equals(f2.declaration) and f1.closure.equals(f2.closure);
+                        return f1.declaration.equals(f2.declaration);
                     },
                     else => return false,
                 }
@@ -314,7 +306,7 @@ pub const Interpreter = struct {
             },
             .function => |f| {
                 const body = try ast.Ast.from(f, arena);
-                const function = Function{ .declaration = body, .closure = try self.active_environment.clone(arena) };
+                const function = Function{ .declaration = body };
                 // TODO do I also want to allow functions to be shadowed? This could potentially be confusing no?
                 //      Probably needed though for proper compatibility with lox.
                 try self.active_environment.define(f.name.lexeme, Value{ .function = function });
@@ -405,7 +397,7 @@ pub const Interpreter = struct {
                     ValueError.Arity => {
                         self.diagnostic = Diagnostic{
                             .token_ = call.closing_paren,
-                            .message = "can only call functions and classes.",
+                            .message = "argument count does not correspond with function declaration.",
                         };
                         return RuntimeError.InvalidCall;
                     },
