@@ -4,6 +4,7 @@ const token = @import("token.zig");
 const environment = @import("environment.zig");
 const scanner = @import("scanner.zig");
 const parser = @import("parser.zig");
+const resolver = @import("resolver.zig");
 const main = @import("main.zig");
 
 const ValueError = error{ NonCallable, Arity };
@@ -203,6 +204,12 @@ pub const Interpreter = struct {
         return interpreter;
     }
 
+    pub fn addResolved(self: Self, expr: ast.Expr, depth: usize) !void {
+        _ = depth;
+        _ = expr;
+        _ = self;
+    }
+
     pub fn run(self: *Self, stdout: std.fs.File.Writer, input: []const u8) !void {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
@@ -212,6 +219,14 @@ pub const Interpreter = struct {
 
         var parse = parser.Parser{ .tokens = tokens.items };
         const parse_tree = try parse.parseInto(arena.allocator());
+
+        // Resolve pre pass for variable resolution.
+        {
+            var resolve_arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer resolve_arena.deinit();
+            var res = resolver.Resolver.init(resolve_arena.allocator(), self);
+            try res.resolve(parse_tree.statements.items);
+        }
 
         self.active_environment = self.global_environment;
         try self.execute(parse_tree.statements.items, stdout);
