@@ -2,8 +2,6 @@ const std = @import("std");
 const interpreter = @import("interpreter.zig");
 const token = @import("token.zig");
 
-// TODO reference count the environments and only delete them if the last reference goes out of scope.
-//      replace function environment with one such reference.
 pub const EnvironmentError = error{ VariableNotFound, OutOfMemory };
 
 // Convention is that all environments are allocated in the global allocator
@@ -19,6 +17,7 @@ pub const Environment = struct {
     parent: ?*Environment,
     children: std.ArrayList(*Environment),
     values: std.StringHashMap(interpreter.Value),
+    closure_refs: u32,
 
     // Parent environment must be valid as long as this environment is used.
     pub fn create_with_parent(allocator: std.mem.Allocator, parent: *Environment) !*Self {
@@ -35,8 +34,33 @@ pub const Environment = struct {
             .parent = null,
             .children = std.ArrayList(*Environment).init(allocator),
             .values = std.StringHashMap(interpreter.Value).init(allocator),
+            .closure_refs = 0,
         };
         return env_place;
+    }
+
+    pub fn clean_unused(self: *Self) void {
+        // Don't clean up the global environment, environments that still have children
+        // or environments that are referenced by closures.
+        if (self.parent == null or self.children.items.len != 0 or self.closure_refs != 0) {
+            return;
+        }
+
+        self.remove_from_parent();
+
+        var it = self.values.iterator();
+        while (it.next()) |kv| {
+            self.allocator.free(kv.key_ptr.*);
+            kv.value_ptr.*.deinit(self.allocator);
+        }
+        self.values.deinit();
+
+        // We checked that we are not the root. So it is certain that we have
+        // a parent environment.
+        var parent = self.parent.?;
+        self.allocator.destroy(self);
+
+        parent.clean_unused();
     }
 
     pub fn deinit(self: *Self) void {
@@ -46,7 +70,20 @@ pub const Environment = struct {
         }
         self.children.deinit();
 
-        // Make sure to remove ourself from our parent node.
+        self.remove_from_parent();
+
+        // Remove our own data.
+        var it = self.values.iterator();
+        while (it.next()) |kv| {
+            self.allocator.free(kv.key_ptr.*);
+            kv.value_ptr.*.deinit(self.allocator);
+        }
+        self.values.deinit();
+
+        self.allocator.destroy(self);
+    }
+
+    fn remove_from_parent(self: *Self) void {
         if (self.parent) |p| {
             const index = for (0.., p.children.items) |index, elem| {
                 if (elem == self) break index;
@@ -55,16 +92,6 @@ pub const Environment = struct {
                 _ = p.children.swapRemove(i);
             }
         }
-
-        // Remove our own data.
-        var iter = self.values.iterator();
-        while (iter.next()) |elem| {
-            self.allocator.free(elem.key_ptr.*);
-            elem.value_ptr.*.deinit(self.allocator);
-        }
-        self.values.deinit();
-
-        self.allocator.destroy(self);
     }
 
     pub fn define(self: *Self, name: []const u8, value: interpreter.Value) !void {
@@ -91,6 +118,16 @@ pub const Environment = struct {
         }
 
         return null;
+    }
+
+    // Count all nodes in the environment tree below this node.
+    // The node you call this function on is included in the count.
+    pub fn count(self: Self) u32 {
+        var total: u32 = 1;
+        for (self.children.items) |c| {
+            total += c.count();
+        }
+        return total;
     }
 
     pub fn assign(self: *Self, name: token.Token, value: interpreter.Value) EnvironmentError!void {

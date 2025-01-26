@@ -11,3 +11,24 @@ fun makeCounter() {
 var counter = makeCounter();
 counter(); // "1".
 counter(); // "2".
+
+
+// This is a more complicated case where the closure is defined inside an
+// anonymous block of the function. The return has to work correctly and the 
+// local block value of j also has to be resolved.
+fun blockClosure() {
+  var i = 0;
+  {
+    var j = 15;
+    fun p() {
+      j = j + 1;
+      i = i + 1;
+      print i + j;
+    }
+    return p;
+  }
+}
+
+var printer = blockClosure();
+printer(); // 17
+printer(); // 19

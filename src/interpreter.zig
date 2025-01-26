@@ -39,6 +39,9 @@ pub const Value = union(enum) {
         switch (self.*) {
             .string => |s| allocator.free(s),
             .function => |*f| {
+                std.debug.assert(f.env.closure_refs != 0);
+                f.env.closure_refs -= 1;
+                f.env.clean_unused();
                 f.declaration.deinit();
             },
             else => {},
@@ -57,6 +60,7 @@ pub const Value = union(enum) {
             },
             .function => |f| {
                 result.function.declaration = try f.declaration.clone(allocator);
+                result.function.env.closure_refs += 1;
             },
             else => {},
         }
@@ -84,13 +88,8 @@ pub const Value = union(enum) {
                     return ValueError.Arity;
                 }
 
-                // Don't delete function environments since they might contain function definitions
-                // that capture this environment. They can only be deleted at the end of the
-                // program.
                 var function_env = try environment.Environment.create_with_parent(interpreter.allocator, f.env);
-                if (function_env.parent == f.env.parent) {
-                    @breakpoint();
-                }
+                defer function_env.clean_unused();
 
                 for (func.params.items, arguments) |param, argument| {
                     try function_env.define(param.lexeme, argument);
@@ -187,6 +186,7 @@ pub const Interpreter = struct {
     diagnostic: ?Diagnostic = null,
 
     pub fn deinit(self: *Self) void {
+        std.log.debug("total envs: {d}", .{self.global_environment.count()});
         self.global_environment.deinit();
     }
 
@@ -320,8 +320,8 @@ pub const Interpreter = struct {
             },
             .block => |statements| {
                 // Open new environment for each nested block.
-                var new_env = try environment.Environment.create_with_parent(self.allocator, self.active_environment);
-                defer new_env.deinit();
+                const new_env = try environment.Environment.create_with_parent(self.allocator, self.active_environment);
+                defer new_env.clean_unused();
 
                 const value = try self.executeBlock(statements.items, new_env, arena, output);
                 if (value != Value.nil) {
@@ -331,6 +331,7 @@ pub const Interpreter = struct {
             .function => |f| {
                 const body = try ast.Ast.from(f, arena);
                 const function = Function{ .declaration = body, .env = self.active_environment };
+                self.active_environment.closure_refs += 1;
                 // TODO do I also want to allow functions to be shadowed? This could potentially be confusing no?
                 //      Probably needed though for proper compatibility with lox.
                 try self.active_environment.define(f.name.lexeme, Value{ .function = function });
