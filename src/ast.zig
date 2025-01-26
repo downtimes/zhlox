@@ -155,18 +155,18 @@ pub const Literal = union(enum) {
 };
 
 pub const Assignment = struct {
-    name: token.Token,
+    variable: Variable,
     value: *Expr,
 
     fn equals(self: Assignment, other: Assignment) bool {
-        return std.mem.eql(u8, self.name.lexeme, other.name.lexeme) and self.value.equals(other.value.*);
+        return self.variable.equals(other.variable) and self.value.equals(other.value.*);
     }
 
     fn clone(self: Assignment, allocator: Allocator) Allocator.Error!Assignment {
         const new_value = try allocator.create(Expr);
         new_value.* = try self.value.clone(allocator);
         return Assignment{
-            .name = try self.name.clone(allocator),
+            .variable = try self.variable.clone(allocator),
             .value = new_value,
         };
     }
@@ -366,6 +366,24 @@ pub const Stmt = union(enum) {
     }
 };
 
+pub const Variable = struct {
+    name: token.Token,
+    resolve_steps: ?u16,
+
+    fn equals(self: Variable, other: Variable) bool {
+        const name_eq = std.mem.eql(u8, self.name.lexeme, other.name.lexeme);
+        const resolve_eq = self.resolve_steps == other.resolve_steps;
+        return name_eq and resolve_eq;
+    }
+
+    fn clone(self: Variable, allocator: Allocator) Allocator.Error!Variable {
+        return Variable{
+            .name = try self.name.clone(allocator),
+            .resolve_steps = self.resolve_steps,
+        };
+    }
+};
+
 pub const Expr = union(enum) {
     binary: Binary,
     grouping: *Expr,
@@ -373,17 +391,14 @@ pub const Expr = union(enum) {
     logical: Logical,
     unary: Unary,
     call: Call,
-    variable: token.Token,
+    variable: Variable,
     assign: Assignment,
 
     fn equals(self: Expr, other: Expr) bool {
         return switch (self) {
+            // Special case because grouping uses pointer
             .grouping => |g| switch (other) {
                 .grouping => |og| return g.equals(og.*),
-                else => return false,
-            },
-            .variable => |v| switch (other) {
-                .variable => |ov| return std.mem.eql(u8, v.lexeme, ov.lexeme),
                 else => return false,
             },
             inline else => |s, tag| switch (other) {

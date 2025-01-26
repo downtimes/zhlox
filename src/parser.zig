@@ -285,7 +285,7 @@ pub const Parser = struct {
             value.* = try self.assignment();
 
             if (@as(std.meta.Tag(ast.Expr), expr) == .variable) {
-                return ast.Expr{ .assign = ast.Assignment{ .name = expr.variable, .value = value } };
+                return ast.Expr{ .assign = ast.Assignment{ .variable = expr.variable, .value = value } };
             }
 
             self.diagnostic = Diagnostic{
@@ -462,7 +462,10 @@ pub const Parser = struct {
         }
 
         if (self.match(&[_]token.Type{token.Type.identifier})) {
-            return ast.Expr{ .variable = self.previous() };
+            return ast.Expr{ .variable = ast.Variable{
+                .name = self.previous(),
+                .resolve_steps = null,
+            } };
         }
 
         if (self.match(&[_]token.Type{token.Type.left_paren})) {

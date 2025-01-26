@@ -17,20 +17,18 @@ pub const Resolver = struct {
     // Probably arena?
     allocator: std.mem.Allocator,
     scopes: std.ArrayList(std.StringArrayHashMap(bool)),
-    interp: *interpreter.Interpreter,
     found_error: bool,
 
-    pub fn init(arena: *std.heap.ArenaAllocator, interp: *interpreter.Interpreter) Self {
+    pub fn init(arena: *std.heap.ArenaAllocator) Self {
         return Resolver{
             .allocator = arena.allocator(),
             .scopes = std.ArrayList(std.StringArrayHashMap(bool)).init(arena.allocator()),
-            .interp = interp,
             .found_error = false,
         };
     }
 
     pub fn resolve(self: *Self, stmts: []ast.Stmt) std.mem.Allocator.Error!void {
-        for (stmts) |stmt| {
+        for (stmts) |*stmt| {
             try self.resolveStmt(stmt);
         }
     }
@@ -39,53 +37,53 @@ pub const Resolver = struct {
         return self.scopes.items.len;
     }
 
-    fn resolveStmt(self: *Self, stmt: ast.Stmt) !void {
-        switch (stmt) {
+    fn resolveStmt(self: *Self, stmt: *ast.Stmt) !void {
+        switch (stmt.*) {
             .block => |b| {
                 try self.begin_scope();
-                for (b.items) |s| {
+                for (b.items) |*s| {
                     try self.resolveStmt(s);
                 }
                 self.end_scope();
             },
-            .var_decl => |vd| {
+            .var_decl => |*vd| {
                 try self.declare(vd.name.lexeme);
-                if (vd.initializer) |i| {
+                if (vd.initializer) |*i| {
                     try self.resolveExpr(i);
                 }
                 try self.define(vd.name.lexeme);
             },
-            .function => |f| {
+            .function => |*f| {
                 try self.declare(f.name.lexeme);
                 try self.define(f.name.lexeme);
                 try self.resolveFunction(f);
             },
-            .expr => |e| {
+            .expr => |*e| {
                 try self.resolveExpr(e);
             },
-            .cond => |c| {
-                try self.resolveExpr(c.condition);
-                try self.resolveStmt(c.then.*);
+            .cond => |*c| {
+                try self.resolveExpr(&c.condition);
+                try self.resolveStmt(c.then);
                 if (c.els) |e| {
-                    try self.resolveStmt(e.*);
+                    try self.resolveStmt(e);
                 }
             },
-            .print => |p| {
+            .print => |*p| {
                 try self.resolveExpr(p);
             },
-            .ret => |r| {
-                if (r.value) |v| {
+            .ret => |*r| {
+                if (r.value) |*v| {
                     try self.resolveExpr(v);
                 }
             },
-            .while_ => |w| {
-                try self.resolveExpr(w.condition);
+            .while_ => |*w| {
+                try self.resolveExpr(&w.condition);
                 try self.resolve(w.body.items);
             },
         }
     }
 
-    fn resolveFunction(self: *Self, function: ast.Function) std.mem.Allocator.Error!void {
+    fn resolveFunction(self: *Self, function: *ast.Function) std.mem.Allocator.Error!void {
         try self.begin_scope();
         for (function.params.items) |param| {
             try self.declare(param.lexeme);
@@ -95,18 +93,18 @@ pub const Resolver = struct {
         self.end_scope();
     }
 
-    fn resolveExpr(self: *Self, expr: ast.Expr) !void {
-        switch (expr) {
-            .variable => |v| {
+    fn resolveExpr(self: *Self, expr: *ast.Expr) !void {
+        switch (expr.*) {
+            .variable => |*v| {
                 const scope = self.scopes.getLastOrNull();
                 if (scope) |s| {
-                    if (s.get(v.lexeme)) |assign_finished| {
+                    if (s.get(v.name.lexeme)) |assign_finished| {
                         if (!assign_finished) {
                             main.reportError(
-                                v.line,
+                                v.name.line,
                                 &[_][]const u8{
                                     "Resolver Error: '",
-                                    v.lexeme,
+                                    v.name.lexeme,
                                     "' ",
                                     "Can't read local variable in its own initializer.",
                                 },
@@ -114,47 +112,55 @@ pub const Resolver = struct {
                             self.found_error = true;
                         }
                     }
-                    try self.resolveLocal(expr, v.lexeme);
+                    try self.resolveLocal(v, v.name.lexeme);
                 }
             },
-            .assign => |a| {
-                try self.resolveExpr(a.value.*);
-                try self.resolveLocal(expr, a.name.lexeme);
+            .assign => |*a| {
+                try self.resolveExpr(a.value);
+                try self.resolveLocal(&a.variable, a.variable.name.lexeme);
             },
-            .binary => |b| {
-                try self.resolveExpr(b.left.*);
-                try self.resolveExpr(b.right.*);
+            .binary => |*b| {
+                try self.resolveExpr(b.left);
+                try self.resolveExpr(b.right);
             },
-            .call => |c| {
-                try self.resolveExpr(c.callee.*);
+            .call => |*c| {
+                try self.resolveExpr(c.callee);
 
-                for (c.arguments.items) |arg| {
+                for (c.arguments.items) |*arg| {
                     try self.resolveExpr(arg);
                 }
             },
             .grouping => |g| {
-                try self.resolveExpr(g.*);
+                try self.resolveExpr(g);
             },
             .logical => |l| {
-                try self.resolveExpr(l.left.*);
-                try self.resolveExpr(l.right.*);
+                try self.resolveExpr(l.left);
+                try self.resolveExpr(l.right);
             },
             .unary => |u| {
-                try self.resolveExpr(u.right.*);
+                try self.resolveExpr(u.right);
             },
             else => {},
         }
     }
 
-    fn resolveLocal(self: Self, expr: ast.Expr, name: []const u8) !void {
+    // Note: in contrast to the lox interpreter described by the book, this
+    //       implementation chose to add the information to the ast itself.
+    //       We don't have objects with stable addresses like in java, adding
+    //       a separate side table would be harder to implement.
+    fn resolveLocal(self: Self, expr: *ast.Variable, name: []const u8) !void {
         // Walk through the scopes from back to front and see if we can resolve it.
+        //
+        // If the variable is a global we will not be making an entry for it.
+        // So for all variables without an entry the interpreter will assume
+        // they are defined in the global environment.
         const len = self.scopes.items.len;
-        for (1..len) |idx| {
+        for (1..len + 1) |idx| {
             const scope = self.scopes.items[len - idx];
             if (scope.contains(name)) {
                 // record number of hops to help interpreter to resolve value
                 // correctly
-                try self.interp.addResolved(expr, idx - 1);
+                expr.resolve_steps = @intCast(idx - 1);
                 return;
             }
         }

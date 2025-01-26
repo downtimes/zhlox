@@ -109,15 +109,31 @@ pub const Environment = struct {
         }
     }
 
-    pub fn get(self: Self, name: token.Token) ?interpreter.Value {
-        const val = self.values.get(name.lexeme);
-        if (val) |v| {
-            return v;
-        } else if (self.parent) |parent| {
-            return parent.get(name);
+    // steps with 0 value is a valid argument. It gives back self.
+    fn ancestor(self: *Self, steps: u16) *Environment {
+        var env = self;
+        var count = steps;
+        while (count > 0) {
+            // Ensure we have a parent.
+            std.debug.assert(env.parent != null);
+            env = env.parent.?;
+            count -= 1;
         }
+        // Ensure no variables of the global scope are resolved using this method.
+        std.debug.assert(env.parent != null);
+        return env;
+    }
 
-        return null;
+    pub fn getInParent(self: *Self, steps: u16, name: token.Token) ?interpreter.Value {
+        return self.ancestor(steps).get(name);
+    }
+
+    pub fn get(self: *Self, name: token.Token) ?interpreter.Value {
+        return self.values.get(name.lexeme);
+    }
+
+    pub fn assignInParent(self: *Self, steps: u16, name: token.Token, value: interpreter.Value) EnvironmentError!void {
+        return self.ancestor(steps).assign(name, value);
     }
 
     pub fn assign(self: *Self, name: token.Token, value: interpreter.Value) EnvironmentError!void {
@@ -127,8 +143,6 @@ pub const Environment = struct {
             value_ptr.*.deinit(self.allocator);
             value_ptr.* = new_value;
             return;
-        } else if (self.parent) |parent| {
-            return parent.assign(name, value);
         }
 
         return EnvironmentError.VariableNotFound;

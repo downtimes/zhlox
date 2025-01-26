@@ -203,12 +203,6 @@ pub const Interpreter = struct {
         return interpreter;
     }
 
-    pub fn addResolved(self: Self, expr: ast.Expr, depth: usize) !void {
-        _ = depth;
-        _ = expr;
-        _ = self;
-    }
-
     pub fn run(self: *Self, stdout: std.fs.File.Writer, input: []const u8) !void {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
@@ -225,7 +219,7 @@ pub const Interpreter = struct {
             // pass is over. Therefore it gets its own little arena.
             var resolve_arena = std.heap.ArenaAllocator.init(self.allocator);
             defer resolve_arena.deinit();
-            var res = resolver.Resolver.init(&resolve_arena, self);
+            var res = resolver.Resolver.init(&resolve_arena);
             try res.resolve(parse_tree.statements.items);
             if (res.found_error) {
                 return;
@@ -438,11 +432,17 @@ pub const Interpreter = struct {
         return RuntimeError.Unimplemented;
     }
 
-    fn getVariable(self: *Self, variable: token.Token) RuntimeError!Value {
-        const val = self.active_environment.get(variable);
+    fn getVariable(self: *Self, variable: ast.Variable) RuntimeError!Value {
+        var val: ?Value = undefined;
+        if (variable.resolve_steps) |steps| {
+            val = self.active_environment.getInParent(steps, variable.name);
+        } else {
+            val = self.global_environment.get(variable.name);
+        }
+
         if (val == null) {
             self.diagnostic = Diagnostic{
-                .token_ = variable,
+                .token_ = variable.name,
                 .message = "is an undefined variable.",
             };
             return RuntimeError.UndefinedVariable;
@@ -499,23 +499,34 @@ pub const Interpreter = struct {
                 return RuntimeError.IllegalBinaryOperand;
             },
             else => {
-                // TODO
+                // Should not be hit if we didn't forget to implement some
+                // binary expression.
+                std.debug.assert(false);
             },
         }
 
         return RuntimeError.Unimplemented;
     }
 
-    fn evaluateAssignment(self: *Self, expr: ast.Assignment, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimeError!Value {
-        const value = try self.evaluateExpression(expr.value.*, arena, output);
+    fn evaluateAssignment(self: *Self, assignment: ast.Assignment, arena: std.mem.Allocator, output: std.fs.File.Writer) RuntimeError!Value {
+        const value = try self.evaluateExpression(assignment.value.*, arena, output);
 
-        self.active_environment.assign(expr.name, value) catch |err| {
+        var res: environment.EnvironmentError!void = undefined;
+        if (assignment.variable.resolve_steps) |steps| {
+            res = self.active_environment.assignInParent(steps, assignment.variable.name, value);
+        } else {
+            res = self.global_environment.assign(assignment.variable.name, value);
+        }
+
+        if (res) |_| {
+            return value;
+        } else |err| {
             switch (err) {
                 // Go up one level in the environment chain.
                 environment.EnvironmentError.VariableNotFound => {
                     // No assignment possible so we report an error.
                     self.diagnostic = Diagnostic{
-                        .token_ = expr.name,
+                        .token_ = assignment.variable.name,
                         .message = "is an undefined variable.",
                     };
                     return RuntimeError.UndefinedVariable;
@@ -524,8 +535,6 @@ pub const Interpreter = struct {
                     return RuntimeError.OutOfMemory;
                 },
             }
-        };
-
-        return value;
+        }
     }
 };
