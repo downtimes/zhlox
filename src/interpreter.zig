@@ -280,7 +280,6 @@ pub const Interpreter = struct {
                 _ = try self.evaluateExpression(e, arena, output);
             },
             .print => |e| {
-                // TODO do I want to propagate print errors upwards?
                 const value = try self.evaluateExpression(e, arena, output);
                 switch (value) {
                     .number => |n| try output.print("{d}", .{n}),
@@ -469,7 +468,9 @@ pub const Interpreter = struct {
                 .less => return Value{ .bool_ = left.number < right.number },
                 .less_equal => return Value{ .bool_ = left.number <= right.number },
                 else => {
-                    // TODO
+                    // Should not be hit if all unary operators are handled in
+                    // the previous switch arms.
+                    std.debug.assert(false);
                 },
             }
         }

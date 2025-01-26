@@ -103,8 +103,7 @@ pub const Parser = struct {
                 if (params.items.len >= config.max_params) {
                     self.diagnostic = Diagnostic{
                         .found = self.peek(),
-                        // TODO: replace with constant during compile?
-                        .message = "Can't have more than 255 arguments.",
+                        .message = std.fmt.comptimePrint("Can't have more than {d} arguments.", .{config.max_params}),
                     };
                     return ParseError.TooManyArguments;
                 }
@@ -421,8 +420,7 @@ pub const Parser = struct {
                 if (arguments.items.len >= config.max_params) {
                     self.diagnostic = Diagnostic{
                         .found = self.peek(),
-                        // TODO: replace with constant during compile?
-                        .message = "Can't have more than 255 arguments.",
+                        .message = std.fmt.comptimePrint("Can't have more than {d} arguments.", .{config.max_params}),
                     };
                     return ParseError.TooManyArguments;
                 }

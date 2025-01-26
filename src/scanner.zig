@@ -21,7 +21,7 @@ const reserved_words = std.StaticStringMap(token.Type).initComptime(.{
     .{ "while", token.Type.while_ },
 });
 
-// TODO we can only handle ascii at the moment. Other utf-8 will not work.
+// TODO: make language utf8 compatible?
 pub const Scanner = struct {
     const Self = @This();
     const Return = std.ArrayList(token.Token);

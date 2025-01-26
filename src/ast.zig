@@ -208,14 +208,12 @@ pub const Conditional = struct {
     els: ?*Stmt,
 
     fn equals(self: Conditional, other: Conditional) bool {
-        // TODO can we make this check for two optionals more succinct?
-        if (self.els) |sels| {
-            const oels = other.els orelse return false;
-            if (!sels.equals(oels.*)) {
+        if (self.els != null and other.els != null) {
+            if (!self.els.?.equals(other.els.?.*)) {
                 return false;
             }
         }
-        if (self.els == null and other.els != null) {
+        if (self.els != other.els) {
             return false;
         }
 
