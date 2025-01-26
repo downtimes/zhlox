@@ -186,7 +186,6 @@ pub const Interpreter = struct {
     diagnostic: ?Diagnostic = null,
 
     pub fn deinit(self: *Self) void {
-        std.log.debug("total envs: {d}", .{self.global_environment.count()});
         self.global_environment.deinit();
     }
 
@@ -228,6 +227,9 @@ pub const Interpreter = struct {
             defer resolve_arena.deinit();
             var res = resolver.Resolver.init(&resolve_arena, self);
             try res.resolve(parse_tree.statements.items);
+            if (res.found_error) {
+                return;
+            }
         }
 
         self.active_environment = self.global_environment;
@@ -244,7 +246,7 @@ pub const Interpreter = struct {
                     _ = try output.write("Hit unimplemented part of the interpreter.");
                 } else {
                     const diagnostic = self.diagnostic.?;
-                    main.reportError(diagnostic.token_.line, &[_][]const u8{ "Runtime Error: ", diagnostic.token_.lexeme, " ", diagnostic.message });
+                    main.reportError(diagnostic.token_.line, &[_][]const u8{ "Runtime Error: '", diagnostic.token_.lexeme, "' ", diagnostic.message });
                 }
                 return err;
             };
@@ -303,9 +305,11 @@ pub const Interpreter = struct {
                 var cond = try self.evaluateExpression(w.condition, arena, output);
 
                 while (cond.isTruthy()) {
-                    const value = try self.executeStatement(w.body.*, arena, output);
-                    if (value != Value.nil) {
-                        return value;
+                    for (w.body.items) |s| {
+                        const value = try self.executeStatement(s, arena, output);
+                        if (value != Value.nil) {
+                            return value;
+                        }
                     }
                     cond = try self.evaluateExpression(w.condition, arena, output);
                 }

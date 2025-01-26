@@ -44,10 +44,14 @@ pub const Scanner = struct {
         return tokens;
     }
 
+    fn lexeme(self: Self) []const u8 {
+        return self.source[self.start_of_lexeme..self.current];
+    }
+
     fn addToken(self: Self, tokens: *Return, type_: token.Type, literal: ?token.Literal) !void {
         try tokens.append(token.Token{
             .type_ = type_,
-            .lexeme = self.source[self.start_of_lexeme..self.current],
+            .lexeme = self.lexeme(),
             .literal = literal,
             .line = self.line,
         });
@@ -100,12 +104,19 @@ pub const Scanner = struct {
                 }
 
                 if (self.isAtEnd()) {
-                    main.reportError(self.line, &[_][]const u8{"Lex Error: Unterminated string."});
+                    main.reportError(self.line, &[_][]const u8{
+                        "Lex Error: '",
+                        self.lexeme(),
+                        "' Unterminated string.",
+                    });
                     return;
                 }
 
                 _ = self.consume(); // Drop closing brace as well.
-                try self.addToken(tokens, Type.string, token.Literal{ .string = self.source[self.start_of_lexeme + 1 .. self.current - 1] });
+                // Drop quotes for the literal value as well by subslicing the
+                // lexeme
+                const quoted_string = self.lexeme();
+                try self.addToken(tokens, Type.string, token.Literal{ .string = quoted_string[1 .. quoted_string.len - 1] });
             },
             '0'...'9' => {
                 while (std.ascii.isDigit(self.peek())) _ = self.consume();
@@ -116,7 +127,7 @@ pub const Scanner = struct {
                     while (std.ascii.isDigit(self.peek())) _ = self.consume();
                 }
 
-                const number = try std.fmt.parseFloat(f64, self.source[self.start_of_lexeme..self.current]);
+                const number = try std.fmt.parseFloat(f64, self.lexeme());
                 try self.addToken(tokens, Type.number, token.Literal{ .number = number });
             },
             'a'...'z', 'A'...'Z', '_' => {
@@ -125,14 +136,18 @@ pub const Scanner = struct {
                     _ = self.consume();
                 }
 
-                const text = self.source[self.start_of_lexeme..self.current];
+                const text = self.lexeme();
                 const t = reserved_words.get(text);
 
                 try self.addToken(tokens, t orelse Type.identifier, null);
             },
             // Ignore whitespace.
             ' ', '\r', '\t' => {},
-            else => main.reportError(self.line, &[_][]const u8{"Lex Error: Unexpected character in input."}),
+            else => main.reportError(self.line, &[_][]const u8{
+                "Lex Error: '",
+                self.lexeme(),
+                "' Unexpected character in input.",
+            }),
         }
     }
 

@@ -55,7 +55,7 @@ pub const Parser = struct {
                 if (self.diagnostic != null) {
                     const diagnostic = self.diagnostic.?;
                     const found = self.diagnostic.?.found;
-                    main.reportError(diagnostic.found.line, &[_][]const u8{ "Parse Error: ", found.lexeme, " ", diagnostic.message });
+                    main.reportError(diagnostic.found.line, &[_][]const u8{ "Parse Error: '", found.lexeme, "' ", diagnostic.message });
                 }
 
                 // In case of invalid assignment the parsing found an error but we are not confused about the state
@@ -203,24 +203,29 @@ pub const Parser = struct {
 
         var body = try self.statement();
 
-        if (after) |a| {
-            switch (body) {
-                // The base case is that the body is a block, then we don't have to create a new block to only put the
-                // after in there.
-                .block => |*b| try b.append(self.allocator, ast.Stmt{ .expr = a }),
-                // Otherwise we have to create a new block so that we can put the after in there.
-                else => {
-                    var sugar = std.ArrayList(ast.Stmt).init(self.allocator);
-                    try sugar.append(body);
-                    try sugar.append(ast.Stmt{ .expr = a });
-                    body = ast.Stmt{ .block = sugar.moveToUnmanaged() };
-                },
-            }
+        // The base case is that the loop is a block, we can then take the
+        // list of statements and just wrap them in a while statement.
+        // Otherwise we create a new list with only one element.
+        // Depending on if the increment part of the if exists or not, we stuff
+        // it into the statement list as well.
+        switch (body) {
+            .block => |*b| {
+                // Stuff the increment after the while body.
+                if (after) |a| {
+                    try b.append(self.allocator, ast.Stmt{ .expr = a });
+                }
+                body = ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = b.* } };
+            },
+            else => {
+                var while_body = std.ArrayList(ast.Stmt).init(self.allocator);
+                try while_body.append(body);
+                // Stuff the increment after the while body.
+                if (after) |a| {
+                    try while_body.append(ast.Stmt{ .expr = a });
+                }
+                body = ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = while_body.moveToUnmanaged() } };
+            },
         }
-
-        const while_body = try self.allocator.create(ast.Stmt);
-        while_body.* = body;
-        body = ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = while_body } };
 
         if (init) |i| {
             var sugar = std.ArrayList(ast.Stmt).init(self.allocator);
@@ -246,10 +251,19 @@ pub const Parser = struct {
         try self.consume(token.Type.left_paren, "Expected '(' after 'while'.");
         const cond = try self.expression();
         try self.consume(token.Type.right_paren, "Expected ')' after while condition.");
-        const stmt = try self.allocator.create(ast.Stmt);
-        stmt.* = try self.statement();
-
-        return ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = stmt } };
+        // Base case is that the statement will be a block. Only if it is not
+        // a block do we manually wrap it into a block.
+        const stmt = try self.statement();
+        switch (stmt) {
+            .block => |b| {
+                return ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = b } };
+            },
+            else => {
+                var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+                try statements.append(stmt);
+                return ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = statements.moveToUnmanaged() } };
+            },
+        }
     }
 
     fn expressionStatement(self: *Self) Stmt {

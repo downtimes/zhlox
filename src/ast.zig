@@ -262,15 +262,27 @@ pub const Logical = struct {
 
 pub const WhileStmt = struct {
     condition: Expr,
-    body: *Stmt,
+    body: std.ArrayListUnmanaged(Stmt),
 
     fn equals(self: WhileStmt, other: WhileStmt) bool {
-        return self.condition.equals(other.condition) and self.body.equals(other.body.*);
+        const same_condition = self.condition.equals(other.condition);
+        const same_statements = for (self.body.items, other.body.items) |s, os| {
+            if (!s.equals(os)) {
+                break false;
+            }
+        } else blk: {
+            break :blk true;
+        };
+        return same_condition and same_statements;
     }
 
     fn clone(self: WhileStmt, allocator: Allocator) Allocator.Error!WhileStmt {
-        const new_body = try allocator.create(Stmt);
-        new_body.* = try self.body.clone(allocator);
+        // Necessary to make a deep copy of the whole subtree and not only a copy
+        // of the array.
+        const new_body = try self.body.clone(allocator);
+        for (new_body.items, self.body.items) |*new_item, old_item| {
+            new_item.* = try old_item.clone(allocator);
+        }
         return WhileStmt{ .condition = try self.condition.clone(allocator), .body = new_body };
     }
 };

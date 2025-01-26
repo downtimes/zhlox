@@ -120,16 +120,6 @@ pub const Environment = struct {
         return null;
     }
 
-    // Count all nodes in the environment tree below this node.
-    // The node you call this function on is included in the count.
-    pub fn count(self: Self) u32 {
-        var total: u32 = 1;
-        for (self.children.items) |c| {
-            total += c.count();
-        }
-        return total;
-    }
-
     pub fn assign(self: *Self, name: token.Token, value: interpreter.Value) EnvironmentError!void {
         if (self.values.contains(name.lexeme)) {
             const new_value = try value.clone(self.allocator);

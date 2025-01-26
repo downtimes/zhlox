@@ -5,6 +5,10 @@ var a = "global";
   }
 
   showA(); // "global"
-  var a = "block"; // local variable does not change the the captured a.
+  // local variable does not change the the captured a.
+  // because the static resolver pass resolved a in the showA function to 
+  // the global scope a. Therefore the local scope a is not taken into 
+  // consideration.
+  var a = "block"; 
   showA(); // "global"
 }
