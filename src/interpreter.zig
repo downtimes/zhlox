@@ -215,16 +215,18 @@ pub const Interpreter = struct {
         defer arena.deinit();
 
         var scan = scanner.Scanner{ .source = input };
-        const tokens = try scan.scanTokens(arena.allocator());
+        const tokens = try scan.scanTokens(&arena);
 
         var parse = parser.Parser{ .tokens = tokens.items };
-        const parse_tree = try parse.parseInto(arena.allocator());
+        const parse_tree = try parse.parseInto(&arena);
 
         // Resolve pre pass for variable resolution.
         {
+            // The memory needed for resolve can be freed after the resolve
+            // pass is over. Therefore it gets its own little arena.
             var resolve_arena = std.heap.ArenaAllocator.init(self.allocator);
             defer resolve_arena.deinit();
-            var res = resolver.Resolver.init(resolve_arena.allocator(), self);
+            var res = resolver.Resolver.init(&resolve_arena, self);
             try res.resolve(parse_tree.statements.items);
         }
 

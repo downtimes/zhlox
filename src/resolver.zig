@@ -10,10 +10,10 @@ pub const Resolver = struct {
     scopes: std.ArrayList(std.StringArrayHashMap(bool)),
     interp: *interpreter.Interpreter,
 
-    pub fn init(arena: std.mem.Allocator, interp: *interpreter.Interpreter) Self {
+    pub fn init(arena: *std.heap.ArenaAllocator, interp: *interpreter.Interpreter) Self {
         return Resolver{
-            .allocator = arena,
-            .scopes = std.ArrayList(std.StringArrayHashMap(bool)).init(arena),
+            .allocator = arena.allocator(),
+            .scopes = std.ArrayList(std.StringArrayHashMap(bool)).init(arena.allocator()),
             .interp = interp,
         };
     }

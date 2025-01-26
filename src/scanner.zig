@@ -31,8 +31,8 @@ pub const Scanner = struct {
     line: u32 = 1,
     source: []const u8,
 
-    pub fn scanTokens(self: *Self, allocator: std.mem.Allocator) !Return {
-        var tokens = Return.init(allocator);
+    pub fn scanTokens(self: *Self, allocator: *std.heap.ArenaAllocator) !Return {
+        var tokens = Return.init(allocator.allocator());
         errdefer tokens.deinit();
 
         while (!self.isAtEnd()) {
