@@ -15,5 +15,3 @@ fun fib(n) {
 for (var i = 0; i < 20; i = i + 1) {
   print fib(i);
 }
-
-return "hello"; // Does nothing but no warning for the user. Should probably add some code for it.

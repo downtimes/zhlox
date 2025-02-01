@@ -1,7 +1,13 @@
 const std = @import("std");
 const ast = @import("ast.zig");
 const main = @import("main.zig");
+const token = @import("token.zig");
 const interpreter = @import("interpreter.zig");
+
+const FunctionType = enum {
+    none,
+    function,
+};
 
 // Has to work in tandem with the creation of environments in the interpreter.
 // For each new environment in the interpreter we create a nested scope here as
@@ -18,12 +24,14 @@ pub const Resolver = struct {
     allocator: std.mem.Allocator,
     scopes: std.ArrayList(std.StringArrayHashMap(bool)),
     found_error: bool,
+    current_function_type: FunctionType,
 
     pub fn init(arena: *std.heap.ArenaAllocator) Self {
         return Resolver{
             .allocator = arena.allocator(),
             .scopes = std.ArrayList(std.StringArrayHashMap(bool)).init(arena.allocator()),
             .found_error = false,
+            .current_function_type = FunctionType.none,
         };
     }
 
@@ -47,14 +55,17 @@ pub const Resolver = struct {
                 self.end_scope();
             },
             .var_decl => |*vd| {
-                try self.declare(vd.name.lexeme);
+                try self.declare(vd.name);
                 if (vd.initializer) |*i| {
                     try self.resolveExpr(i);
                 }
                 try self.define(vd.name.lexeme);
             },
             .function => |*f| {
-                try self.declare(f.name.lexeme);
+                const enclosing_function_type = self.current_function_type;
+                self.current_function_type = FunctionType.function;
+                defer self.current_function_type = enclosing_function_type;
+                try self.declare(f.name);
                 try self.define(f.name.lexeme);
                 try self.resolveFunction(f);
             },
@@ -72,6 +83,14 @@ pub const Resolver = struct {
                 try self.resolveExpr(p);
             },
             .ret => |*r| {
+                if (self.current_function_type == FunctionType.none) {
+                    main.reportError(
+                        r.keyword.line,
+                        &[_][]const u8{
+                            "Resolver Error: return statement only allowed inside functions.",
+                        },
+                    );
+                }
                 if (r.value) |*v| {
                     try self.resolveExpr(v);
                 }
@@ -86,7 +105,7 @@ pub const Resolver = struct {
     fn resolveFunction(self: *Self, function: *ast.Function) std.mem.Allocator.Error!void {
         try self.begin_scope();
         for (function.params.items) |param| {
-            try self.declare(param.lexeme);
+            try self.declare(param);
             try self.define(param.lexeme);
         }
         try self.resolve(function.body.items);
@@ -166,11 +185,21 @@ pub const Resolver = struct {
         }
     }
 
-    fn declare(self: Self, name: []const u8) !void {
+    fn declare(self: *Self, name: token.Token) !void {
         if (self.scope_depth() == 0) return;
 
         const scope: *std.StringArrayHashMap(bool) = &self.scopes.items[self.scope_depth() - 1];
-        try scope.put(name, false);
+        if (scope.contains(name.lexeme)) {
+            main.reportError(name.line, &[_][]const u8{
+                "Resolver Error: '",
+                name.lexeme,
+                "' ",
+                "variable with same name in local scope already exists. ",
+                "Redeclaring a variable in the same scope is not allowed.",
+            });
+            self.found_error = true;
+        }
+        try scope.put(name.lexeme, false);
     }
 
     fn define(self: Self, name: []const u8) !void {

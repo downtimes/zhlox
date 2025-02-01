@@ -1,0 +1,10 @@
+fun bad() {
+    var a = "first";
+    var a = "second"; // error local variable in same scope declared twice.
+    return 15; // allowed since it is inside function.
+}
+
+var a = 15;
+var a = "500"; // allowed since it is in global scope.
+
+return "hello"; // error return outside function.
