@@ -146,6 +146,9 @@ pub const Resolver = struct {
                 try self.resolveExpr(b.left);
                 try self.resolveExpr(b.right);
             },
+            .get => |*g| {
+                try self.resolveExpr(g.object);
+            },
             .call => |*c| {
                 try self.resolveExpr(c.callee);
 

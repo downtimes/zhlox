@@ -407,6 +407,24 @@ pub const Variable = struct {
     }
 };
 
+pub const Get = struct {
+    name: token.Token,
+    object: *Expr,
+
+    fn equals(self: Get, other: Get) bool {
+        return self.object.equals(other.object.*) and std.mem.eql(u8, self.name.lexeme, other.name.lexeme);
+    }
+
+    fn clone(self: Get, allocator: Allocator) Allocator.Error!Get {
+        const new_place = try allocator.create(Expr);
+        new_place.* = try self.object.clone(allocator);
+        return Get{
+            .name = try self.name.clone(allocator),
+            .object = new_place,
+        };
+    }
+};
+
 pub const Expr = union(enum) {
     binary: Binary,
     grouping: *Expr,
@@ -414,6 +432,7 @@ pub const Expr = union(enum) {
     logical: Logical,
     unary: Unary,
     call: Call,
+    get: Get,
     variable: Variable,
     assign: Assignment,
 
@@ -445,6 +464,7 @@ pub const Expr = union(enum) {
             .variable => |inner| Expr{ .variable = try inner.clone(allocator) },
             .assign => |inner| Expr{ .assign = try inner.clone(allocator) },
             .call => |inner| Expr{ .call = try inner.clone(allocator) },
+            .get => |inner| Expr{ .get = try inner.clone(allocator) },
         };
     }
 };

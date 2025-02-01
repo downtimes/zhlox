@@ -427,6 +427,12 @@ pub const Parser = struct {
         while (true) {
             if (self.match(&[_]token.Type{token.Type.left_paren})) {
                 expr = try self.finishCall(expr);
+            } else if (self.match(&[_]token.Type{token.Type.dot})) {
+                try self.consume(token.Type.identifier, "Expected property name after '.'.");
+                const name = self.previous();
+                const new_object = try self.allocator.create(ast.Expr);
+                new_object.* = expr;
+                expr = ast.Expr{ .get = ast.Get{ .name = name, .object = new_object } };
             } else {
                 break;
             }
