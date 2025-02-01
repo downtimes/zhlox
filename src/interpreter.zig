@@ -29,6 +29,13 @@ const Class = struct {
     name: []const u8,
 };
 
+// TODO: how to ensure the class we are pointing to is still around when we need it?
+//       create extra memory space for class definitions?
+//       how does it interact with environments?
+const Instance = struct {
+    class: Class,
+};
+
 pub const Value = union(enum) {
     const Self = @This();
 
@@ -39,6 +46,7 @@ pub const Value = union(enum) {
     builtin: Builtin,
     function: Function,
     class: Class,
+    instance: Instance,
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
@@ -83,7 +91,7 @@ pub const Value = union(enum) {
         output: std.fs.File.Writer,
     ) CallError!Value {
         switch (self.*) {
-            .string, .number, .bool_, .nil => return ValueError.NonCallable,
+            .string, .number, .bool_, .nil, .instance => return ValueError.NonCallable,
             .builtin => |f| {
                 if (f.arity != arguments.len) {
                     return ValueError.Arity;
@@ -91,8 +99,10 @@ pub const Value = union(enum) {
                 return f.function(arguments);
             },
             .class => |c| {
-                _ = c;
-                return ValueError.NonCallable;
+                if (arguments.len != 0) {
+                    return ValueError.Arity;
+                }
+                return Value{ .instance = Instance{ .class = c } };
             },
             .function => |*f| {
                 const func = f.function();
@@ -116,12 +126,8 @@ pub const Value = union(enum) {
     fn isTruthy(self: Self) bool {
         switch (self) {
             .bool_ => |b| return b,
-            .number => return true,
             .nil => return false,
-            .string => return true,
-            .builtin => return true,
-            .function => return true,
-            .class => return true,
+            inline else => return true,
         }
     }
 
@@ -168,7 +174,17 @@ pub const Value = union(enum) {
             .class => |c| {
                 switch (other) {
                     .class => |c2| {
-                        return std.mem.eql(u8, c2.name, c.name);
+                        // TODO: The current implementation is simply broken.
+                        return std.mem.eql(u8, c.name, c2.name);
+                    },
+                    else => return false,
+                }
+            },
+            .instance => |i| {
+                switch (other) {
+                    .instance => |oi| {
+                        // TODO: The current implementation is simply broken.
+                        return std.mem.eql(u8, i.class.name, oi.class.name);
                     },
                     else => return false,
                 }
@@ -309,6 +325,7 @@ pub const Interpreter = struct {
                     .nil => _ = try output.write("nil"),
                     .builtin => _ = try output.write("<native fn>"),
                     .class => |c| try output.print("class {s}", .{c.name}),
+                    .instance => |i| try output.print("{s} instance", .{i.class.name}),
                     .function => |f| {
                         const func = f.function();
                         try output.print("<fn {s}>", .{func.name.lexeme});

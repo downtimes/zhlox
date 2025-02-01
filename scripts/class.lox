@@ -6,10 +6,10 @@ class DevonshireCream {
 }
 print DevonshireCream; // Prints "DevonshireCream"
 
-// // Instantiating classes.
-// class Bagel {}
-// var bagel = Bagel();
-// print bagel; // Prints "Bagel instance".
+// Instantiating classes.
+class Bagel {}
+var bagel = Bagel();
+print bagel; // Prints "Bagel instance".
 
 // // Dynamically attaching functions
 // class Box {}
