@@ -1,6 +1,5 @@
 const std = @import("std");
 const interpreter = @import("interpreter.zig");
-const token = @import("token.zig");
 
 pub const EnvironmentError = error{ VariableNotFound, OutOfMemory };
 
@@ -124,22 +123,22 @@ pub const Environment = struct {
         return env;
     }
 
-    pub fn getInParent(self: *Self, steps: u16, name: token.Token) ?interpreter.Value {
+    pub fn getInParent(self: *Self, steps: u16, name: []const u8) ?interpreter.Value {
         return self.ancestor(steps).get(name);
     }
 
-    pub fn get(self: *Self, name: token.Token) ?interpreter.Value {
-        return self.values.get(name.lexeme);
+    pub fn get(self: *Self, name: []const u8) ?interpreter.Value {
+        return self.values.get(name);
     }
 
-    pub fn assignInParent(self: *Self, steps: u16, name: token.Token, value: interpreter.Value) EnvironmentError!void {
+    pub fn assignInParent(self: *Self, steps: u16, name: []const u8, value: interpreter.Value) EnvironmentError!void {
         return self.ancestor(steps).assign(name, value);
     }
 
-    pub fn assign(self: *Self, name: token.Token, value: interpreter.Value) EnvironmentError!void {
-        if (self.values.contains(name.lexeme)) {
+    pub fn assign(self: *Self, name: []const u8, value: interpreter.Value) EnvironmentError!void {
+        if (self.values.contains(name)) {
             const new_value = try value.clone(self.allocator);
-            const value_ptr = self.values.getPtr(name.lexeme).?;
+            const value_ptr = self.values.getPtr(name).?;
             value_ptr.*.deinit(self.allocator);
             value_ptr.* = new_value;
             return;

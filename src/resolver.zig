@@ -61,6 +61,10 @@ pub const Resolver = struct {
                 }
                 try self.define(vd.name.lexeme);
             },
+            .class => |*c| {
+                try self.declare(c.name);
+                try self.define(c.name.lexeme);
+            },
             .function => |*f| {
                 const enclosing_function_type = self.current_function_type;
                 self.current_function_type = FunctionType.function;

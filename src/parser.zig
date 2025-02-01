@@ -6,6 +6,8 @@ const config = @import("config.zig");
 
 const ParseError = error{ UnexpectedToken, InvalidAssignment, OutOfMemory, TooManyArguments };
 
+const FunctionKind = enum { method, function };
+
 pub const Diagnostic = struct {
     found: token.Token,
     message: []const u8,
@@ -78,16 +80,38 @@ pub const Parser = struct {
 
     fn declaration(self: *Self) Stmt {
         if (self.match(&[_]token.Type{token.Type.fun})) {
-            return self.function();
+            return self.function(FunctionKind.function);
         }
         if (self.match(&[_]token.Type{token.Type.var_})) {
             return self.variableDeclaration();
+        }
+        if (self.match(&[_]token.Type{token.Type.class})) {
+            return self.class_declaration();
         }
 
         return self.statement();
     }
 
-    fn function(self: *Self) Stmt {
+    fn class_declaration(self: *Self) Stmt {
+        try self.consume(token.Type.identifier, "Expected class name");
+        const identifier = self.previous();
+        try self.consume(token.Type.left_brace, "Expected '{' before class body.");
+
+        var methods = std.ArrayList(ast.Stmt).init(self.allocator);
+        while (!self.check(token.Type.right_brace) and !self.isAtEnd()) {
+            try methods.append(try self.function(FunctionKind.method));
+        }
+
+        try self.consume(token.Type.right_brace, "Expected '}' after class body.");
+
+        return ast.Stmt{ .class = ast.Class{
+            .name = identifier,
+            .methods = methods.moveToUnmanaged(),
+        } };
+    }
+
+    fn function(self: *Self, kind: FunctionKind) Stmt {
+        _ = kind; // implement flag for methods to know in interpreter if this needs to be bound.
         try self.consume(token.Type.identifier, "Expected function name.");
         const name = self.previous();
 

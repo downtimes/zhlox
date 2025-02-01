@@ -309,6 +309,29 @@ pub const Return = struct {
     }
 };
 
+pub const Class = struct {
+    name: token.Token,
+    methods: std.ArrayListUnmanaged(Stmt),
+
+    fn equals(self: Class, other: Class) bool {
+        const name_same = std.mem.eql(u8, self.name.lexeme, other.name.lexeme);
+        var methods_same = self.methods.items.len == other.methods.items.len;
+        var index: usize = 0;
+        while (methods_same and index < self.methods.items.len) : (index += 1) {
+            methods_same = self.methods.items[index].equals(other.methods.items[index]);
+        }
+        return name_same and methods_same;
+    }
+
+    fn clone(self: Class, allocator: Allocator) Allocator.Error!Class {
+        const new_methods = try self.methods.clone(allocator);
+        for (new_methods.items, self.methods.items) |*new_item, old_item| {
+            new_item.* = try old_item.clone(allocator);
+        }
+        return Class{ .name = try self.name.clone(allocator), .methods = new_methods };
+    }
+};
+
 pub const Stmt = union(enum) {
     expr: Expr,
     cond: Conditional,
@@ -316,6 +339,7 @@ pub const Stmt = union(enum) {
     while_: WhileStmt,
     var_decl: VariableDeclaration,
     function: Function,
+    class: Class,
     ret: Return,
     block: std.ArrayListUnmanaged(Stmt),
 
@@ -358,6 +382,7 @@ pub const Stmt = union(enum) {
                 }
                 break :blk Stmt{ .block = new_block };
             },
+            .class => |inner| Stmt{ .class = try inner.clone(allocator) },
             .function => |inner| Stmt{ .function = try inner.clone(allocator) },
             .ret => |inner| Stmt{ .ret = try inner.clone(allocator) },
         };

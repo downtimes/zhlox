@@ -1,0 +1,58 @@
+// Defining classes with methods.
+class DevonshireCream {
+  serveOn() {
+    return "Scones";
+  }
+}
+print DevonshireCream; // Prints "DevonshireCream"
+
+// // Instantiating classes.
+// class Bagel {}
+// var bagel = Bagel();
+// print bagel; // Prints "Bagel instance".
+
+// // Dynamically attaching functions
+// class Box {}
+
+// fun notMethod(argument) {
+//   print "called function with " + argument;
+// }
+
+// var box = Box();
+// box.function = notMethod;
+// box.function("argument"); // Prints "called function with argument"
+
+// // Call method on class instance
+// class Bacon {
+//   eat() {
+//     print "Crunch crunch crunch!";
+//   }
+// }
+
+// Bacon().eat(); // Prints "Crunch crunch crunch!".
+
+// // Access to the instance via this
+// class Cake {
+//   taste() {
+//     var adjective = "delicious";
+//     print "The " + this.flavor + " cake is " + adjective + "!";
+//   }
+// }
+
+// var cake = Cake();
+// cake.flavor = "German chocolate";
+// cake.taste(); // Prints "The German chocolate cake is delicious!".
+
+// // Complicated nesting of closures and bound methods
+// class Thing {
+//   getCallback() {
+//     fun localFunction() {
+//       print this;
+//     }
+
+//     return localFunction;
+//   }
+// }
+
+// var callback = Thing().getCallback();
+// callback();

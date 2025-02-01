@@ -25,6 +25,10 @@ const Function = struct {
     }
 };
 
+const Class = struct {
+    name: []const u8,
+};
+
 pub const Value = union(enum) {
     const Self = @This();
 
@@ -34,10 +38,12 @@ pub const Value = union(enum) {
     nil: void,
     builtin: Builtin,
     function: Function,
+    class: Class,
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .string => |s| allocator.free(s),
+            .class => |c| allocator.free(c.name),
             .function => |*f| {
                 std.debug.assert(f.env.closure_refs != 0);
                 f.env.closure_refs -= 1;
@@ -48,15 +54,17 @@ pub const Value = union(enum) {
         }
     }
 
-    // TODO I'm not happy with the current state of the string handling in my code.
+    // TODO I'm not happy with the current state of string handling in my code.
     //      Think of a better scheme that scales better and isn't as brittle.
     pub fn clone(self: Self, allocator: std.mem.Allocator) std.mem.Allocator.Error!Self {
         var result = self;
 
         switch (self) {
             .string => |s| {
-                const new_str = try allocator.dupe(u8, s);
-                result.string = new_str;
+                result.string = try allocator.dupe(u8, s);
+            },
+            .class => |c| {
+                result.class.name = try allocator.dupe(u8, c.name);
             },
             .function => |f| {
                 result.function.declaration = try f.declaration.clone(allocator);
@@ -82,6 +90,10 @@ pub const Value = union(enum) {
                 }
                 return f.function(arguments);
             },
+            .class => |c| {
+                _ = c;
+                return ValueError.NonCallable;
+            },
             .function => |*f| {
                 const func = f.function();
                 if (func.params.items.len != arguments.len) {
@@ -100,7 +112,7 @@ pub const Value = union(enum) {
         }
     }
 
-    // Strange rule according to Lex definition...
+    // Strange rule according to Lox definition...
     fn isTruthy(self: Self) bool {
         switch (self) {
             .bool_ => |b| return b,
@@ -109,6 +121,7 @@ pub const Value = union(enum) {
             .string => return true,
             .builtin => return true,
             .function => return true,
+            .class => return true,
         }
     }
 
@@ -148,6 +161,14 @@ pub const Value = union(enum) {
                 switch (other) {
                     .function => |f2| {
                         return f1.declaration.equals(f2.declaration) and (f1.env == f2.env);
+                    },
+                    else => return false,
+                }
+            },
+            .class => |c| {
+                switch (other) {
+                    .class => |c2| {
+                        return std.mem.eql(u8, c2.name, c.name);
                     },
                     else => return false,
                 }
@@ -287,6 +308,7 @@ pub const Interpreter = struct {
                     .bool_ => |b| try output.print("{}", .{b}),
                     .nil => _ = try output.write("nil"),
                     .builtin => _ = try output.write("<native fn>"),
+                    .class => |c| try output.print("class {s}", .{c.name}),
                     .function => |f| {
                         const func = f.function();
                         try output.print("<fn {s}>", .{func.name.lexeme});
@@ -324,6 +346,13 @@ pub const Interpreter = struct {
                 if (value != Value.nil) {
                     return value;
                 }
+            },
+            .class => |c| {
+                try self.active_environment.define(c.name.lexeme, Value.nil);
+                self.active_environment.assign(c.name.lexeme, Value{ .class = Class{ .name = c.name.lexeme } }) catch {
+                    // Do nothing since we defined the variable before so this case is never hit.
+                };
+                return Value.nil;
             },
             .function => |f| {
                 const body = try ast.Ast.from(f, arena);
@@ -434,9 +463,9 @@ pub const Interpreter = struct {
     fn getVariable(self: *Self, variable: ast.Variable) RuntimeError!Value {
         var val: ?Value = undefined;
         if (variable.resolve_steps) |steps| {
-            val = self.active_environment.getInParent(steps, variable.name);
+            val = self.active_environment.getInParent(steps, variable.name.lexeme);
         } else {
-            val = self.global_environment.get(variable.name);
+            val = self.global_environment.get(variable.name.lexeme);
         }
 
         if (val == null) {
@@ -514,9 +543,9 @@ pub const Interpreter = struct {
 
         var res: environment.EnvironmentError!void = undefined;
         if (assignment.variable.resolve_steps) |steps| {
-            res = self.active_environment.assignInParent(steps, assignment.variable.name, value);
+            res = self.active_environment.assignInParent(steps, assignment.variable.name.lexeme, value);
         } else {
-            res = self.global_environment.assign(assignment.variable.name, value);
+            res = self.global_environment.assign(assignment.variable.name.lexeme, value);
         }
 
         if (res) |_| {
