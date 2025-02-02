@@ -16,33 +16,23 @@ const Builtin = struct {
 };
 
 const Function = struct {
-    declaration: ast.Ast,
+    declaration: *ast.Function,
     env: *environment.Environment,
-
-    fn function(self: Function) ast.Function {
-        // We know the only statement in the ast is the function itself. The function statement is always present.
-        return self.declaration.statements.items[0].function;
-    }
 };
 
 const Class = struct {
-    name: []const u8,
+    name: []const u8, // This memory is not owned, it points into input_scratch.
 };
 
-// TODO: how to ensure the class we are pointing to is still around when we need it?
-//       create extra memory space for class definitions?
-//       how does it interact with environments?
 const Instance = struct {
     class: Class,
-    // Fields should be allocated in the environment of the instance so
-    // the pointers should always be okay?
-    fields: std.StringHashMapUnmanaged(*Value),
+    fields: std.StringHashMapUnmanaged(Value),
 };
 
 pub const Value = union(enum) {
     const Self = @This();
 
-    string: []const u8, // We expect the memory of this slice to be owned by our interpreter or by the environment.
+    string: []const u8, // String values in here are owned by the value.
     number: f64,
     bool_: bool,
     nil: void,
@@ -54,15 +44,16 @@ pub const Value = union(enum) {
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .string => |s| allocator.free(s),
-            .class => |c| allocator.free(c.name),
-            .instance => |*i| {
-                i.fields.deinit(allocator);
+            .instance => |i| {
+                var it = i.fields.valueIterator();
+                while (it.next()) |v| {
+                    v.deinit(allocator);
+                }
             },
             .function => |*f| {
-                std.debug.assert(f.env.closure_refs != 0);
-                f.env.closure_refs -= 1;
-                f.env.clean_unused();
-                f.declaration.deinit();
+                std.debug.assert(f.env.refs != 0);
+                f.env.refs -= 1;
+                f.env.clean_unused(true);
             },
             else => {},
         }
@@ -77,15 +68,18 @@ pub const Value = union(enum) {
             .string => |s| {
                 result.string = try allocator.dupe(u8, s);
             },
-            .class => |c| {
-                result.class.name = try allocator.dupe(u8, c.name);
-            },
             .instance => |i| {
                 result.instance.fields = try i.fields.clone(allocator);
+                var it = i.fields.iterator();
+                while (it.next()) |old_kv| {
+                    result.instance.fields.putAssumeCapacity(
+                        old_kv.key_ptr.*,
+                        old_kv.value_ptr.*,
+                    );
+                }
             },
-            .function => |f| {
-                result.function.declaration = try f.declaration.clone(allocator);
-                result.function.env.closure_refs += 1;
+            .function => |_| {
+                result.function.env.refs += 1;
             },
             else => {},
         }
@@ -112,17 +106,17 @@ pub const Value = union(enum) {
                 }
                 return Value{ .instance = Instance{
                     .class = c,
-                    .fields = std.StringHashMapUnmanaged(*Value){},
+                    .fields = std.StringHashMapUnmanaged(Value){},
                 } };
             },
             .function => |*f| {
-                const func = f.function();
+                const func = f.declaration;
                 if (func.params.items.len != arguments.len) {
                     return ValueError.Arity;
                 }
 
                 var function_env = try environment.Environment.create_with_parent(interpreter.allocator, f.env);
-                defer function_env.clean_unused();
+                defer function_env.clean_unused(true);
 
                 for (func.params.items, arguments) |param, argument| {
                     try function_env.define(param.lexeme, argument);
@@ -144,18 +138,6 @@ pub const Value = union(enum) {
 
     pub fn equal(self: Self, other: Self) bool {
         switch (self) {
-            .bool_ => |b1| {
-                switch (other) {
-                    .bool_ => |b2| return b1 == b2,
-                    else => return false,
-                }
-            },
-            .number => |n1| {
-                switch (other) {
-                    .number => |n2| return n1 == n2,
-                    else => return false,
-                }
-            },
             .nil => {
                 switch (other) {
                     .nil => return true,
@@ -168,45 +150,9 @@ pub const Value = union(enum) {
                     else => return false,
                 }
             },
-            .builtin => |b1| {
+            inline else => |s, s_tag| {
                 switch (other) {
-                    .builtin => |b2| return b1.function == b2.function,
-                    else => return false,
-                }
-            },
-            .function => |f1| {
-                switch (other) {
-                    .function => |f2| {
-                        return f1.declaration.equals(f2.declaration) and (f1.env == f2.env);
-                    },
-                    else => return false,
-                }
-            },
-            .class => |c| {
-                switch (other) {
-                    .class => |c2| {
-                        // TODO: The current implementation is simply broken.
-                        return std.mem.eql(u8, c.name, c2.name);
-                    },
-                    else => return false,
-                }
-            },
-            .instance => |i| {
-                switch (other) {
-                    .instance => |o| {
-                        // TODO: The current implementation is simply broken.
-                        var i_fields = i.fields.iterator();
-                        while (i_fields.next()) |kv| {
-                            if (o.fields.get(kv.key_ptr.*)) |v| {
-                                if (!kv.value_ptr.*.equal(v.*)) {
-                                    return false;
-                                }
-                            } else {
-                                return false;
-                            }
-                        }
-                        return std.mem.eql(u8, i.class.name, i.class.name);
-                    },
+                    s_tag => |o| return std.meta.eql(s, o),
                     else => return false,
                 }
             },
@@ -232,11 +178,11 @@ pub const RuntimeError = error{
 } || std.fs.File.WriteError;
 
 pub const Diagnostic = struct {
-    token_: token.Token, // Associated token to get the operation and the line number.
-    message: []const u8,
+    line_number: u32,
+    input: []const u8, // Not owned by diagnostic, expected to be in input scratch.
+    message: []const u8, // Not owned by diagnostic, expected to be static str.
 };
 
-// TODO give the user feedback when he tries to use return statement outside of function.
 pub const Interpreter = struct {
     const Self = @This();
 
@@ -265,15 +211,17 @@ pub const Interpreter = struct {
         return interpreter;
     }
 
-    pub fn run(self: *Self, stdout: std.fs.File.Writer, input: []const u8) !void {
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
-
+    pub fn run(
+        self: *Self,
+        stdout: std.fs.File.Writer,
+        input: []const u8,
+        input_scratch: std.mem.Allocator,
+    ) !void {
         var scan = scanner.Scanner{ .source = input };
-        const tokens = try scan.scanTokens(&arena);
+        const tokens = try scan.scanTokens(input_scratch);
 
         var parse = parser.Parser{ .tokens = tokens.items };
-        const parse_tree = try parse.parseInto(&arena);
+        const parse_tree = try parse.parseInto(input_scratch);
 
         // Resolve pre pass for variable resolution.
         {
@@ -294,7 +242,7 @@ pub const Interpreter = struct {
     }
 
     fn execute(self: *Self, statements: []ast.Stmt) RuntimeError!void {
-        for (statements) |stmt| {
+        for (statements) |*stmt| {
             var arena = std.heap.ArenaAllocator.init(self.allocator);
             defer arena.deinit();
 
@@ -303,7 +251,7 @@ pub const Interpreter = struct {
                     _ = try self.output.write("Hit unimplemented part of the interpreter.");
                 } else {
                     const diagnostic = self.diagnostic.?;
-                    main.reportError(diagnostic.token_.line, &[_][]const u8{ "Runtime Error: '", diagnostic.token_.lexeme, "' ", diagnostic.message });
+                    main.reportError(diagnostic.line_number, &[_][]const u8{ "Runtime Error: '", diagnostic.input, "' ", diagnostic.message });
                 }
                 return err;
             };
@@ -318,31 +266,32 @@ pub const Interpreter = struct {
         defer self.active_environment = previous_environment;
 
         self.active_environment = env;
-        for (statements) |statement| {
+        for (statements) |*statement| {
             const val = try self.executeStatement(statement, block_arena.allocator());
             if (val != Value.nil) {
-                // We delete our arena for the block before returning so we need to make sure we hoist the value out
-                // to the arena outside of the current block to not get a dangling reference.
+                // We delete our arena for the block before returning so we
+                // need to make sure we hoist the value out to the arena outside
+                // of the current block to not get a dangling pointer.
                 return val.clone(arena);
             }
         }
         return Value.nil;
     }
 
-    fn executeStatement(self: *Self, stmt: ast.Stmt, arena: std.mem.Allocator) RuntimeError!Value {
-        switch (stmt) {
-            .cond => |c| {
-                const cond = try self.evaluateExpression(c.condition, arena);
+    fn executeStatement(self: *Self, stmt: *ast.Stmt, arena: std.mem.Allocator) RuntimeError!Value {
+        switch (stmt.*) {
+            .cond => |*c| {
+                const cond = try self.evaluateExpression(&c.condition, arena);
                 if (cond.isTruthy()) {
-                    return try self.executeStatement(c.then.*, arena);
+                    return try self.executeStatement(c.then, arena);
                 } else if (c.els != null) {
-                    return try self.executeStatement(c.els.?.*, arena);
+                    return try self.executeStatement(c.els.?, arena);
                 }
             },
-            .expr => |e| {
+            .expr => |*e| {
                 _ = try self.evaluateExpression(e, arena);
             },
-            .print => |e| {
+            .print => |*e| {
                 const value = try self.evaluateExpression(e, arena);
                 switch (value) {
                     .number => |n| try self.output.print("{d}", .{n}),
@@ -353,28 +302,27 @@ pub const Interpreter = struct {
                     .class => |c| try self.output.print("class {s}", .{c.name}),
                     .instance => |i| try self.output.print("{s} instance", .{i.class.name}),
                     .function => |f| {
-                        const func = f.function();
-                        try self.output.print("<fn {s}>", .{func.name.lexeme});
+                        try self.output.print("<fn {s}>", .{f.declaration.name.lexeme});
                     },
                 }
                 _ = try self.output.write("\n");
             },
-            .while_ => |w| {
-                var cond = try self.evaluateExpression(w.condition, arena);
+            .while_ => |*w| {
+                var cond = try self.evaluateExpression(&w.condition, arena);
 
                 while (cond.isTruthy()) {
-                    for (w.body.items) |s| {
+                    for (w.body.items) |*s| {
                         const value = try self.executeStatement(s, arena);
                         if (value != Value.nil) {
                             return value;
                         }
                     }
-                    cond = try self.evaluateExpression(w.condition, arena);
+                    cond = try self.evaluateExpression(&w.condition, arena);
                 }
             },
-            .var_decl => |decl| {
+            .var_decl => |*decl| {
                 var val: Value = Value.nil;
-                if (decl.initializer) |initializer| {
+                if (decl.initializer) |*initializer| {
                     val = try self.evaluateExpression(initializer, arena);
                 }
 
@@ -383,7 +331,7 @@ pub const Interpreter = struct {
             .block => |statements| {
                 // Open new environment for each nested block.
                 const new_env = try environment.Environment.create_with_parent(self.allocator, self.active_environment);
-                defer new_env.clean_unused();
+                defer new_env.clean_unused(false);
 
                 const value = try self.executeBlock(statements.items, new_env, arena);
                 if (value != Value.nil) {
@@ -397,16 +345,15 @@ pub const Interpreter = struct {
                 };
                 return Value.nil;
             },
-            .function => |f| {
-                const body = try ast.Ast.from(f, arena);
-                const function = Function{ .declaration = body, .env = self.active_environment };
-                self.active_environment.closure_refs += 1;
+            .function => |*f| {
+                const function = Function{ .declaration = f, .env = self.active_environment };
+                self.active_environment.refs += 1;
                 // TODO do I also want to allow functions to be shadowed? This could potentially be confusing no?
                 //      Probably needed though for proper compatibility with lox.
                 try self.active_environment.define(f.name.lexeme, Value{ .function = function });
             },
-            .ret => |r| {
-                if (r.value) |val| {
+            .ret => |*r| {
+                if (r.value) |*val| {
                     return self.evaluateExpression(val, arena);
                 }
                 return Value.nil;
@@ -415,23 +362,24 @@ pub const Interpreter = struct {
         return Value.nil;
     }
 
-    fn evaluateExpression(self: *Self, expr: ast.Expr, arena: std.mem.Allocator) RuntimeError!Value {
-        switch (expr) {
+    fn evaluateExpression(self: *Self, expr: *ast.Expr, arena: std.mem.Allocator) RuntimeError!Value {
+        switch (expr.*) {
             .literal => |l| {
                 return switch (l) {
                     .bool_ => |b| Value{ .bool_ = b },
                     .number => |n| Value{ .number = n },
-                    .string => |s| blk: {
-                        break :blk Value{ .string = s };
-                    },
+                    // The value is not duped here yet, it will happen when the
+                    // block goes out of scope or the value is put into an environment
+                    // via variable initialization.
+                    .string => |s| Value{ .string = s },
                     .nil => Value.nil,
                 };
             },
             .grouping => |g| {
-                return self.evaluateExpression(g.*, arena);
+                return self.evaluateExpression(g, arena);
             },
             .logical => |l| {
-                const left = try self.evaluateExpression(l.left.*, arena);
+                const left = try self.evaluateExpression(l.left, arena);
 
                 if (l.operator.type_ == token.Type.and_) {
                     if (!left.isTruthy()) return left;
@@ -439,10 +387,10 @@ pub const Interpreter = struct {
                     if (left.isTruthy()) return left;
                 }
 
-                return self.evaluateExpression(l.right.*, arena);
+                return self.evaluateExpression(l.right, arena);
             },
             .unary => |u| {
-                const right = try self.evaluateExpression(u.right.*, arena);
+                const right = try self.evaluateExpression(u.right, arena);
 
                 if (u.operator.type_ == token.Type.bang) {
                     return Value{ .bool_ = !right.isTruthy() };
@@ -454,7 +402,8 @@ pub const Interpreter = struct {
                     }
 
                     self.diagnostic = Diagnostic{
-                        .token_ = u.operator,
+                        .line_number = u.operator.line,
+                        .input = u.operator.lexeme,
                         .message = "operand must be a number.",
                     };
                     return RuntimeError.MinusOperand;
@@ -471,15 +420,16 @@ pub const Interpreter = struct {
                 return self.evaluateAssignment(assignment, arena);
             },
             .get => |g| {
-                const object = try self.evaluateExpression(g.object.*, arena);
+                const object = try self.evaluateExpression(g.object, arena);
                 switch (object) {
                     .instance => |i| {
                         const val = i.fields.get(g.name.lexeme);
                         if (val) |v| {
-                            return v.*;
+                            return v;
                         } else {
                             self.diagnostic = Diagnostic{
-                                .token_ = g.name,
+                                .line_number = g.name.line,
+                                .input = g.name.lexeme,
                                 .message = "Unknown property.",
                             };
                             return RuntimeError.UnknownProperty;
@@ -488,16 +438,17 @@ pub const Interpreter = struct {
                     else => {},
                 }
                 self.diagnostic = Diagnostic{
-                    .token_ = g.name,
+                    .line_number = g.name.line,
+                    .input = g.name.lexeme,
                     .message = "Only instances have properties.",
                 };
                 return RuntimeError.GetNonInstance;
             },
             .call => |call| {
-                var callee = try self.evaluateExpression(call.callee.*, arena);
+                var callee = try self.evaluateExpression(call.callee, arena);
                 var arguments = std.ArrayList(Value).init(arena);
 
-                for (call.arguments.items) |arg| {
+                for (call.arguments.items) |*arg| {
                     try arguments.append(try self.evaluateExpression(arg, arena));
                 }
 
@@ -506,14 +457,16 @@ pub const Interpreter = struct {
                 } else |err| switch (err) {
                     ValueError.NonCallable => {
                         self.diagnostic = Diagnostic{
-                            .token_ = call.closing_paren,
+                            .line_number = call.line_number,
+                            .input = ")",
                             .message = "can only call functions and classes.",
                         };
                         return RuntimeError.InvalidCall;
                     },
                     ValueError.Arity => {
                         self.diagnostic = Diagnostic{
-                            .token_ = call.closing_paren,
+                            .line_number = call.line_number,
+                            .input = ")",
                             .message = "argument count does not correspond with function declaration.",
                         };
                         return RuntimeError.InvalidCall;
@@ -536,7 +489,8 @@ pub const Interpreter = struct {
 
         if (val == null) {
             self.diagnostic = Diagnostic{
-                .token_ = variable.name,
+                .line_number = variable.name.line,
+                .input = variable.name.lexeme,
                 .message = "is an undefined variable.",
             };
             return RuntimeError.UndefinedVariable;
@@ -546,8 +500,8 @@ pub const Interpreter = struct {
     }
 
     fn evaluateBinary(self: *Self, binary: ast.Binary, arena: std.mem.Allocator) RuntimeError!Value {
-        const left = try self.evaluateExpression(binary.left.*, arena);
-        const right = try self.evaluateExpression(binary.right.*, arena);
+        const left = try self.evaluateExpression(binary.left, arena);
+        const right = try self.evaluateExpression(binary.right, arena);
 
         if (@as(std.meta.Tag(Value), left) == .number and @as(std.meta.Tag(Value), right) == .number) {
             switch (binary.operator.type_) {
@@ -563,9 +517,7 @@ pub const Interpreter = struct {
                 .less => return Value{ .bool_ = left.number < right.number },
                 .less_equal => return Value{ .bool_ = left.number <= right.number },
                 else => {
-                    // Should not be hit if all unary operators are handled in
-                    // the previous switch arms.
-                    std.debug.assert(false);
+                    // Do nothing and let the later code handle this case.
                 },
             }
         }
@@ -582,22 +534,22 @@ pub const Interpreter = struct {
             .bang_equal => return Value{ .bool_ = !left.equal(right) },
             .minus, .star, .slash, .less, .less_equal, .greater, .greater_equal => {
                 self.diagnostic = Diagnostic{
-                    .token_ = binary.operator,
+                    .line_number = binary.operator.line,
+                    .input = binary.operator.lexeme,
                     .message = "operands must be numbers.",
                 };
                 return RuntimeError.IllegalBinaryOperand;
             },
             .plus => {
                 self.diagnostic = Diagnostic{
-                    .token_ = binary.operator,
+                    .line_number = binary.operator.line,
+                    .input = binary.operator.lexeme,
                     .message = "operands must be two numbers or two strings.",
                 };
                 return RuntimeError.IllegalBinaryOperand;
             },
             else => {
-                // Should not be hit if we didn't forget to implement some
-                // binary expression.
-                std.debug.assert(false);
+                // Do nothing and let the later code handle this case.
             },
         }
 
@@ -605,7 +557,7 @@ pub const Interpreter = struct {
     }
 
     fn evaluateAssignment(self: *Self, assignment: ast.Assignment, arena: std.mem.Allocator) RuntimeError!Value {
-        const value = try self.evaluateExpression(assignment.value.*, arena);
+        const value = try self.evaluateExpression(assignment.value, arena);
 
         var res: environment.EnvironmentError!void = undefined;
         if (assignment.variable.resolve_steps) |steps| {
@@ -622,7 +574,8 @@ pub const Interpreter = struct {
                 environment.EnvironmentError.VariableNotFound => {
                     // No assignment possible so we report an error.
                     self.diagnostic = Diagnostic{
-                        .token_ = assignment.variable.name,
+                        .line_number = assignment.variable.name.line,
+                        .input = assignment.variable.name.lexeme,
                         .message = "is an undefined variable.",
                     };
                     return RuntimeError.UndefinedVariable;

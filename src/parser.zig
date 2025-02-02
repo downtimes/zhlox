@@ -39,9 +39,8 @@ pub const Parser = struct {
         }
     }
 
-    // This Ast doesn't own the tokens contained in it.
-    pub fn parseInto(self: *Self, arena: *std.heap.ArenaAllocator) ParseError!ast.Ast {
-        self.allocator = arena.allocator();
+    pub fn parseInto(self: *Self, input_scratch: std.mem.Allocator) ParseError!ast.Ast {
+        self.allocator = input_scratch;
         var result = try ast.Ast.init(self.allocator);
 
         var last_err: ?ParseError = null;
@@ -267,7 +266,7 @@ pub const Parser = struct {
             value = try self.expression();
         }
         try self.consume(token.Type.semicolon, "Expected ';' after return.");
-        return ast.Stmt{ .ret = ast.Return{ .keyword = keyword, .value = value } };
+        return ast.Stmt{ .ret = ast.Return{ .line_number = keyword.line, .value = value } };
     }
 
     fn whileStatement(self: *Self) Stmt {
@@ -464,7 +463,7 @@ pub const Parser = struct {
 
         return ast.Expr{ .call = ast.Call{
             .callee = callee_place,
-            .closing_paren = closing_paren,
+            .line_number = closing_paren.line,
             .arguments = arguments.moveToUnmanaged(),
         } };
     }

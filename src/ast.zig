@@ -2,334 +2,72 @@ const std = @import("std");
 const token = @import("token.zig");
 const parser = @import("parser.zig");
 const config = @import("config.zig");
-const Allocator = std.mem.Allocator;
 
 pub const Binary = struct {
     left: *Expr,
     operator: token.Token,
     right: *Expr,
-
-    fn equals(self: Binary, other: Binary) bool {
-        return self.left.equals(other.left.*) and self.operator.type_ == other.operator.type_ and self.right.equals(other.right.*);
-    }
-
-    fn clone(self: Binary, allocator: Allocator) Allocator.Error!Binary {
-        const new_left = try allocator.create(Expr);
-        new_left.* = try self.left.clone(allocator);
-        const new_right = try allocator.create(Expr);
-        new_right.* = try self.right.clone(allocator);
-        return Binary{
-            .left = new_left,
-            .operator = try self.operator.clone(allocator),
-            .right = new_right,
-        };
-    }
 };
 
 pub const Unary = struct {
     operator: token.Token,
     right: *Expr,
-
-    fn equals(self: Unary, other: Unary) bool {
-        return self.operator.type_ == other.operator.type_ and self.right.equals(other.right.*);
-    }
-
-    fn clone(self: Unary, allocator: Allocator) Allocator.Error!Unary {
-        const new_right = try allocator.create(Expr);
-        new_right.* = try self.right.clone(allocator);
-        return Unary{
-            .operator = try self.operator.clone(allocator),
-            .right = new_right,
-        };
-    }
 };
 
 pub const Function = struct {
     name: token.Token,
     params: std.ArrayListUnmanaged(token.Token),
     body: std.ArrayListUnmanaged(Stmt),
-
-    fn equals(self: Function, other: Function) bool {
-        if (self.params.items.len != other.params.items.len) {
-            return false;
-        }
-        if (self.body.items.len != other.body.items.len) {
-            return false;
-        }
-        for (self.params.items, other.params.items) |s, o| {
-            if (!std.mem.eql(u8, s.lexeme, o.lexeme)) {
-                return false;
-            }
-        }
-        for (self.body.items, other.body.items) |s, o| {
-            if (!s.equals(o)) {
-                return false;
-            }
-        }
-        return std.mem.eql(u8, self.name.lexeme, other.name.lexeme);
-    }
-
-    fn clone(self: Function, allocator: Allocator) Allocator.Error!Function {
-        const new_params = try self.params.clone(allocator);
-        for (new_params.items, self.params.items) |*new, old| {
-            new.* = try old.clone(allocator);
-        }
-        const new_body = try self.body.clone(allocator);
-        for (new_body.items, self.body.items) |*new, old| {
-            new.* = try old.clone(allocator);
-        }
-
-        return Function{
-            .name = try self.name.clone(allocator),
-            .params = new_params,
-            .body = new_body,
-        };
-    }
 };
 
 pub const Call = struct {
     callee: *Expr,
-    closing_paren: token.Token, // Used for error reporting line numbers.
+    line_number: u32,
     arguments: std.ArrayListUnmanaged(Expr),
-
-    fn equals(self: Call, other: Call) bool {
-        if (self.arguments.items.len != other.arguments.items.len) {
-            return false;
-        }
-        for (self.arguments.items, other.arguments.items) |s, o| {
-            if (!s.equals(o)) {
-                return false;
-            }
-        }
-        return self.callee.equals(other.callee.*) and self.closing_paren.type_ == other.closing_paren.type_;
-    }
-
-    fn clone(self: Call, allocator: Allocator) Allocator.Error!Call {
-        const new_callee = try allocator.create(Expr);
-        new_callee.* = try self.callee.clone(allocator);
-        const new_arguments = try self.arguments.clone(allocator);
-        for (new_arguments.items, self.arguments.items) |*new, old| {
-            new.* = try old.clone(allocator);
-        }
-        return Call{
-            .callee = new_callee,
-            .closing_paren = try self.closing_paren.clone(allocator),
-            .arguments = new_arguments,
-        };
-    }
 };
 
 pub const Literal = union(enum) {
     number: f64,
-    string: []const u8,
+    string: []const u8, // The string is not owned, it points into the input_scratch
     bool_: bool,
     nil: void,
-
-    fn equals(self: Literal, other: Literal) bool {
-        return switch (self) {
-            .number => |n| switch (other) {
-                .number => |n2| return n == n2,
-                else => return false,
-            },
-            .bool_ => |b| switch (other) {
-                .bool_ => |b2| return b == b2,
-                else => return false,
-            },
-            .nil => switch (other) {
-                .nil => return true,
-                else => return false,
-            },
-            .string => |s| switch (other) {
-                .string => |s2| return std.mem.eql(u8, s, s2),
-                else => return false,
-            },
-        };
-    }
-
-    fn clone(self: Literal, allocator: Allocator) Allocator.Error!Literal {
-        return switch (self) {
-            .string => |s| Literal{ .string = try allocator.dupe(u8, s) },
-            else => self,
-        };
-    }
 };
 
 pub const Assignment = struct {
     variable: Variable,
     value: *Expr,
-
-    fn equals(self: Assignment, other: Assignment) bool {
-        return self.variable.equals(other.variable) and self.value.equals(other.value.*);
-    }
-
-    fn clone(self: Assignment, allocator: Allocator) Allocator.Error!Assignment {
-        const new_value = try allocator.create(Expr);
-        new_value.* = try self.value.clone(allocator);
-        return Assignment{
-            .variable = try self.variable.clone(allocator),
-            .value = new_value,
-        };
-    }
 };
 
 pub const VariableDeclaration = struct {
     name: token.Token,
     initializer: ?Expr,
-
-    fn equals(self: VariableDeclaration, other: VariableDeclaration) bool {
-        if (self.initializer) |sint| {
-            const oint = other.initializer orelse return false;
-            if (!sint.equals(oint)) {
-                return false;
-            }
-        }
-        if (self.initializer == null and other.initializer != null) {
-            return false;
-        }
-
-        return std.mem.eql(u8, self.name.lexeme, other.name.lexeme);
-    }
-
-    fn clone(self: VariableDeclaration, allocator: Allocator) Allocator.Error!VariableDeclaration {
-        var new_initializer: ?Expr = null;
-        if (self.initializer) |initializer| {
-            new_initializer = try initializer.clone(allocator);
-        }
-        return VariableDeclaration{
-            .name = try self.name.clone(allocator),
-            .initializer = new_initializer,
-        };
-    }
 };
 
 pub const Conditional = struct {
     condition: Expr,
     then: *Stmt,
     els: ?*Stmt,
-
-    fn equals(self: Conditional, other: Conditional) bool {
-        if (self.els != null and other.els != null) {
-            if (!self.els.?.equals(other.els.?.*)) {
-                return false;
-            }
-        }
-        if (self.els != other.els) {
-            return false;
-        }
-
-        return self.condition.equals(other.condition) and self.then.equals(other.then.*);
-    }
-
-    fn clone(self: Conditional, allocator: Allocator) Allocator.Error!Conditional {
-        const new_then = try allocator.create(Stmt);
-        new_then.* = try self.then.clone(allocator);
-        var new_els: ?*Stmt = null;
-        if (self.els) |els| {
-            new_els = try allocator.create(Stmt);
-            new_els.?.* = try els.clone(allocator);
-        }
-        return Conditional{
-            .condition = try self.condition.clone(allocator),
-            .then = new_then,
-            .els = new_els,
-        };
-    }
 };
 
 pub const Logical = struct {
     left: *Expr,
     operator: token.Token,
     right: *Expr,
-
-    fn equals(self: Logical, other: Logical) bool {
-        return self.left.equals(other.left.*) and self.operator.type_ == other.operator.type_ and self.right.equals(other.right.*);
-    }
-
-    fn clone(self: Logical, allocator: Allocator) Allocator.Error!Logical {
-        const new_left = try allocator.create(Expr);
-        new_left.* = try self.left.clone(allocator);
-        const new_right = try allocator.create(Expr);
-        new_right.* = try self.right.clone(allocator);
-        return Logical{
-            .left = new_left,
-            .operator = try self.operator.clone(allocator),
-            .right = new_right,
-        };
-    }
 };
 
 pub const WhileStmt = struct {
     condition: Expr,
     body: std.ArrayListUnmanaged(Stmt),
-
-    fn equals(self: WhileStmt, other: WhileStmt) bool {
-        const same_condition = self.condition.equals(other.condition);
-        const same_statements = for (self.body.items, other.body.items) |s, os| {
-            if (!s.equals(os)) {
-                break false;
-            }
-        } else blk: {
-            break :blk true;
-        };
-        return same_condition and same_statements;
-    }
-
-    fn clone(self: WhileStmt, allocator: Allocator) Allocator.Error!WhileStmt {
-        // Necessary to make a deep copy of the whole subtree and not only a copy
-        // of the array.
-        const new_body = try self.body.clone(allocator);
-        for (new_body.items, self.body.items) |*new_item, old_item| {
-            new_item.* = try old_item.clone(allocator);
-        }
-        return WhileStmt{ .condition = try self.condition.clone(allocator), .body = new_body };
-    }
 };
 
 pub const Return = struct {
-    keyword: token.Token, // Used only for line number reporting
+    line_number: u32,
     value: ?Expr,
-
-    fn equals(self: Return, other: Return) bool {
-        if (self.value) |sval| {
-            const oval = other.value orelse return false;
-            return sval.equals(oval);
-        }
-        return self.value == null and other.value == null;
-    }
-
-    fn clone(self: Return, allocator: Allocator) Allocator.Error!Return {
-        var new_val: ?Expr = null;
-        if (self.value) |val| {
-            new_val = try val.clone(allocator);
-        }
-        return Return{
-            .keyword = try self.keyword.clone(allocator),
-            .value = new_val,
-        };
-    }
 };
 
 pub const Class = struct {
     name: token.Token,
     methods: std.ArrayListUnmanaged(Stmt),
-
-    fn equals(self: Class, other: Class) bool {
-        const name_same = std.mem.eql(u8, self.name.lexeme, other.name.lexeme);
-        var methods_same = self.methods.items.len == other.methods.items.len;
-        var index: usize = 0;
-        while (methods_same and index < self.methods.items.len) : (index += 1) {
-            methods_same = self.methods.items[index].equals(other.methods.items[index]);
-        }
-        return name_same and methods_same;
-    }
-
-    fn clone(self: Class, allocator: Allocator) Allocator.Error!Class {
-        const new_methods = try self.methods.clone(allocator);
-        for (new_methods.items, self.methods.items) |*new_item, old_item| {
-            new_item.* = try old_item.clone(allocator);
-        }
-        return Class{ .name = try self.name.clone(allocator), .methods = new_methods };
-    }
 };
 
 pub const Stmt = union(enum) {
@@ -342,87 +80,16 @@ pub const Stmt = union(enum) {
     class: Class,
     ret: Return,
     block: std.ArrayListUnmanaged(Stmt),
-
-    fn equals(self: Stmt, other: Stmt) bool {
-        return switch (self) {
-            .block => |b| {
-                switch (other) {
-                    .block => |other_b| {
-                        if (b.items.len != other_b.items.len) {
-                            return false;
-                        }
-                        for (b.items, other_b.items) |statement, other_statement| {
-                            if (!statement.equals(other_statement)) {
-                                return false;
-                            }
-                        }
-                        return true;
-                    },
-                    else => return false,
-                }
-            },
-            inline else => |s, tag| switch (other) {
-                tag => |o| return s.equals(o),
-                else => return false,
-            },
-        };
-    }
-
-    fn clone(self: Stmt, allocator: Allocator) Allocator.Error!Stmt {
-        return switch (self) {
-            .expr => |inner| Stmt{ .expr = try inner.clone(allocator) },
-            .cond => |inner| Stmt{ .cond = try inner.clone(allocator) },
-            .print => |inner| Stmt{ .print = try inner.clone(allocator) },
-            .while_ => |inner| Stmt{ .while_ = try inner.clone(allocator) },
-            .var_decl => |inner| Stmt{ .var_decl = try inner.clone(allocator) },
-            .block => |inner| blk: {
-                const new_block = try inner.clone(allocator);
-                for (new_block.items, inner.items) |*new_item, old_item| {
-                    new_item.* = try old_item.clone(allocator);
-                }
-                break :blk Stmt{ .block = new_block };
-            },
-            .class => |inner| Stmt{ .class = try inner.clone(allocator) },
-            .function => |inner| Stmt{ .function = try inner.clone(allocator) },
-            .ret => |inner| Stmt{ .ret = try inner.clone(allocator) },
-        };
-    }
 };
 
 pub const Variable = struct {
     name: token.Token,
     resolve_steps: ?u16,
-
-    fn equals(self: Variable, other: Variable) bool {
-        const name_eq = std.mem.eql(u8, self.name.lexeme, other.name.lexeme);
-        const resolve_eq = self.resolve_steps == other.resolve_steps;
-        return name_eq and resolve_eq;
-    }
-
-    fn clone(self: Variable, allocator: Allocator) Allocator.Error!Variable {
-        return Variable{
-            .name = try self.name.clone(allocator),
-            .resolve_steps = self.resolve_steps,
-        };
-    }
 };
 
 pub const Get = struct {
     name: token.Token,
     object: *Expr,
-
-    fn equals(self: Get, other: Get) bool {
-        return self.object.equals(other.object.*) and std.mem.eql(u8, self.name.lexeme, other.name.lexeme);
-    }
-
-    fn clone(self: Get, allocator: Allocator) Allocator.Error!Get {
-        const new_place = try allocator.create(Expr);
-        new_place.* = try self.object.clone(allocator);
-        return Get{
-            .name = try self.name.clone(allocator),
-            .object = new_place,
-        };
-    }
 };
 
 pub const Expr = union(enum) {
@@ -435,69 +102,15 @@ pub const Expr = union(enum) {
     get: Get,
     variable: Variable,
     assign: Assignment,
-
-    fn equals(self: Expr, other: Expr) bool {
-        return switch (self) {
-            // Special case because grouping uses pointer
-            .grouping => |g| switch (other) {
-                .grouping => |og| return g.equals(og.*),
-                else => return false,
-            },
-            inline else => |s, tag| switch (other) {
-                tag => |o| return s.equals(o),
-                else => return false,
-            },
-        };
-    }
-
-    fn clone(self: Expr, allocator: Allocator) Allocator.Error!Expr {
-        return switch (self) {
-            .binary => |inner| Expr{ .binary = try inner.clone(allocator) },
-            .grouping => |inner| {
-                const new_group = try allocator.create(Expr);
-                new_group.* = try inner.clone(allocator);
-                return Expr{ .grouping = new_group };
-            },
-            .literal => |inner| Expr{ .literal = try inner.clone(allocator) },
-            .logical => |inner| Expr{ .logical = try inner.clone(allocator) },
-            .unary => |inner| Expr{ .unary = try inner.clone(allocator) },
-            .variable => |inner| Expr{ .variable = try inner.clone(allocator) },
-            .assign => |inner| Expr{ .assign = try inner.clone(allocator) },
-            .call => |inner| Expr{ .call = try inner.clone(allocator) },
-            .get => |inner| Expr{ .get = try inner.clone(allocator) },
-        };
-    }
 };
 
 pub const Ast = struct {
     const Self = @This();
 
     arena: std.heap.ArenaAllocator,
-    // Expectation is that all sub things of statements are heap allocated into the arena above.
     statements: std.ArrayListUnmanaged(Stmt),
 
-    pub fn from(function: Function, allocator: Allocator) !Self {
-        var new_ast = try init(allocator);
-        errdefer new_ast.deinit();
-
-        const function_copy = try function.clone(new_ast.arena.allocator());
-        try new_ast.append(Stmt{ .function = function_copy });
-        return new_ast;
-    }
-
-    pub fn equals(self: Self, other: Self) bool {
-        if (self.statements.items.len != other.statements.items.len) {
-            return false;
-        }
-        for (self.statements.items, other.statements.items) |own_statement, other_statement| {
-            if (!own_statement.equals(other_statement)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    pub fn init(allocator: Allocator) !Self {
+    pub fn init(allocator: std.mem.Allocator) !Self {
         const result = Ast{
             .arena = std.heap.ArenaAllocator.init(allocator),
             .statements = std.ArrayListUnmanaged(Stmt){},
@@ -505,24 +118,10 @@ pub const Ast = struct {
         return result;
     }
 
-    pub fn clone(self: Self, allocator: Allocator) !Self {
-        var new_ast = try Ast.init(allocator);
-        errdefer new_ast.deinit();
-        new_ast.statements = try self.statements.clone(new_ast.arena.allocator());
-        for (new_ast.statements.items, self.statements.items) |*new_item, old_item| {
-            new_item.* = try old_item.clone(new_ast.arena.allocator());
-        }
-        return new_ast;
-    }
-
     pub fn deinit(self: *Self) void {
         self.arena.deinit();
     }
 
-    // Statement must be allocated with the allocator found in this ast.
-    // TODO: is it a more Zig style interface to have an alloc method on the ast instead which gives you a
-    //       pointer to the statement you can fill? I honestly am still pretty lost when it comes to managing memory
-    //       in Zig programs that are more than basic functions.
     pub fn append(self: *Self, statement: Stmt) !void {
         try self.statements.append(self.arena.allocator(), statement);
     }

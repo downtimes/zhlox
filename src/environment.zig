@@ -16,7 +16,7 @@ pub const Environment = struct {
     parent: ?*Environment,
     children: std.ArrayList(*Environment),
     values: std.StringHashMap(interpreter.Value),
-    closure_refs: u32,
+    refs: u32,
 
     // Parent environment must be valid as long as this environment is used.
     pub fn create_with_parent(allocator: std.mem.Allocator, parent: *Environment) !*Self {
@@ -33,33 +33,34 @@ pub const Environment = struct {
             .parent = null,
             .children = std.ArrayList(*Environment).init(allocator),
             .values = std.StringHashMap(interpreter.Value).init(allocator),
-            .closure_refs = 0,
+            .refs = 0,
         };
         return env_place;
     }
 
-    pub fn clean_unused(self: *Self) void {
+    pub fn clean_unused(self: *Self, parents: bool) void {
         // Don't clean up the global environment, environments that still have children
         // or environments that are referenced by closures.
-        if (self.parent == null or self.children.items.len != 0 or self.closure_refs != 0) {
+        if (self.parent == null or self.children.items.len != 0 or self.refs != 0) {
             return;
         }
 
-        self.remove_from_parent();
-
-        var it = self.values.iterator();
-        while (it.next()) |kv| {
-            self.allocator.free(kv.key_ptr.*);
-            kv.value_ptr.*.deinit(self.allocator);
+        var it = self.values.valueIterator();
+        while (it.next()) |v| {
+            v.*.deinit(self.allocator);
         }
         self.values.deinit();
+        self.children.deinit();
 
         // We checked that we are not the root. So it is certain that we have
         // a parent environment.
         var parent = self.parent.?;
+        parent.remove_child(self);
         self.allocator.destroy(self);
 
-        parent.clean_unused();
+        if (parents) {
+            parent.clean_unused(true);
+        }
     }
 
     pub fn deinit(self: *Self) void {
@@ -69,41 +70,36 @@ pub const Environment = struct {
         }
         self.children.deinit();
 
-        self.remove_from_parent();
+        if (self.parent) |p| {
+            p.remove_child(self);
+        }
 
         // Remove our own data.
-        var it = self.values.iterator();
-        while (it.next()) |kv| {
-            self.allocator.free(kv.key_ptr.*);
-            kv.value_ptr.*.deinit(self.allocator);
+        var it = self.values.valueIterator();
+        while (it.next()) |v| {
+            v.*.deinit(self.allocator);
         }
         self.values.deinit();
 
         self.allocator.destroy(self);
     }
 
-    fn remove_from_parent(self: *Self) void {
-        if (self.parent) |p| {
-            const index = for (0.., p.children.items) |index, elem| {
-                if (elem == self) break index;
-            } else null;
-            if (index) |i| {
-                _ = p.children.swapRemove(i);
+    fn remove_child(self: *Self, env: *Environment) void {
+        for (0.., self.children.items) |index, c| {
+            if (c == env) {
+                _ = self.children.swapRemove(index);
+                return;
             }
         }
     }
 
     pub fn define(self: *Self, name: []const u8, value: interpreter.Value) !void {
-        const owned_str = try self.allocator.dupe(u8, name);
-        errdefer self.allocator.free(owned_str);
         var owned_value = try value.clone(self.allocator);
         errdefer owned_value.deinit(self.allocator);
 
         // We allow shadowing of variables by removing entries instead of blocking addition.
-        var old = try self.values.fetchPut(owned_str, owned_value);
+        var old = try self.values.fetchPut(name, owned_value);
         if (old) |*o| {
-            // The hashmap does use the old key so we have to free the new key.
-            self.allocator.free(owned_str);
             o.value.deinit(self.allocator);
         }
     }
@@ -136,11 +132,10 @@ pub const Environment = struct {
     }
 
     pub fn assign(self: *Self, name: []const u8, value: interpreter.Value) EnvironmentError!void {
-        if (self.values.contains(name)) {
+        if (self.values.getPtr(name)) |ptr| {
             const new_value = try value.clone(self.allocator);
-            const value_ptr = self.values.getPtr(name).?;
-            value_ptr.*.deinit(self.allocator);
-            value_ptr.* = new_value;
+            ptr.*.deinit(self.allocator);
+            ptr.* = new_value;
             return;
         }
 

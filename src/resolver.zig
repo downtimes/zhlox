@@ -89,7 +89,7 @@ pub const Resolver = struct {
             .ret => |*r| {
                 if (self.current_function_type == FunctionType.none) {
                     main.reportError(
-                        r.keyword.line,
+                        r.line_number,
                         &[_][]const u8{
                             "Resolver Error: return statement only allowed inside functions.",
                         },
