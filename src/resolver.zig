@@ -149,6 +149,10 @@ pub const Resolver = struct {
             .get => |*g| {
                 try self.resolveExpr(g.object);
             },
+            .set => |*s| {
+                try self.resolveExpr(s.value);
+                try self.resolveExpr(s.object);
+            },
             .call => |*c| {
                 try self.resolveExpr(c.callee);
 

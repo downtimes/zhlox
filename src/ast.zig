@@ -92,6 +92,12 @@ pub const Get = struct {
     object: *Expr,
 };
 
+pub const Set = struct {
+    name: token.Token,
+    object: *Expr,
+    value: *Expr,
+};
+
 pub const Expr = union(enum) {
     binary: Binary,
     grouping: *Expr,
@@ -100,6 +106,7 @@ pub const Expr = union(enum) {
     unary: Unary,
     call: Call,
     get: Get,
+    set: Set,
     variable: Variable,
     assign: Assignment,
 };

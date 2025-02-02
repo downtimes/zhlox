@@ -306,8 +306,21 @@ pub const Parser = struct {
             const value = try self.allocator.create(ast.Expr);
             value.* = try self.assignment();
 
-            if (@as(std.meta.Tag(ast.Expr), expr) == .variable) {
-                return ast.Expr{ .assign = ast.Assignment{ .variable = expr.variable, .value = value } };
+            switch (expr) {
+                .variable => |v| {
+                    return ast.Expr{ .assign = ast.Assignment{
+                        .variable = v,
+                        .value = value,
+                    } };
+                },
+                .get => |g| {
+                    return ast.Expr{ .set = ast.Set{
+                        .name = g.name,
+                        .object = g.object,
+                        .value = value,
+                    } };
+                },
+                else => {},
             }
 
             self.diagnostic = Diagnostic{

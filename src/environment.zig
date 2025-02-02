@@ -15,7 +15,7 @@ pub const Environment = struct {
     allocator: std.mem.Allocator,
     parent: ?*Environment,
     children: std.ArrayList(*Environment),
-    values: std.StringHashMap(interpreter.Value),
+    values: std.StringHashMap(*interpreter.Value),
     refs: u32,
 
     // Parent environment must be valid as long as this environment is used.
@@ -32,7 +32,7 @@ pub const Environment = struct {
             .allocator = allocator,
             .parent = null,
             .children = std.ArrayList(*Environment).init(allocator),
-            .values = std.StringHashMap(interpreter.Value).init(allocator),
+            .values = std.StringHashMap(*interpreter.Value).init(allocator),
             .refs = 0,
         };
         return env_place;
@@ -47,7 +47,7 @@ pub const Environment = struct {
 
         var it = self.values.valueIterator();
         while (it.next()) |v| {
-            v.*.deinit(self.allocator);
+            v.*.deinit();
         }
         self.values.deinit();
         self.children.deinit();
@@ -77,7 +77,7 @@ pub const Environment = struct {
         // Remove our own data.
         var it = self.values.valueIterator();
         while (it.next()) |v| {
-            v.*.deinit(self.allocator);
+            v.*.deinit();
         }
         self.values.deinit();
 
@@ -93,15 +93,14 @@ pub const Environment = struct {
         }
     }
 
-    pub fn define(self: *Self, name: []const u8, value: interpreter.Value) !void {
-        var owned_value = try value.clone(self.allocator);
-        errdefer owned_value.deinit(self.allocator);
-
+    pub fn define(self: *Self, name: []const u8, value: *interpreter.Value) !void {
         // We allow shadowing of variables by removing entries instead of blocking addition.
-        var old = try self.values.fetchPut(name, owned_value);
-        if (old) |*o| {
-            o.value.deinit(self.allocator);
+        const resp = try self.values.getOrPut(name);
+        if (resp.found_existing) {
+            resp.value_ptr.*.deinit();
         }
+        value.ref += 1;
+        resp.value_ptr.* = value;
     }
 
     // steps with 0 value is a valid argument. It gives back self.
@@ -119,23 +118,23 @@ pub const Environment = struct {
         return env;
     }
 
-    pub fn getInParent(self: *Self, steps: u16, name: []const u8) ?interpreter.Value {
+    pub fn getInParent(self: *Self, steps: u16, name: []const u8) ?*interpreter.Value {
         return self.ancestor(steps).get(name);
     }
 
-    pub fn get(self: *Self, name: []const u8) ?interpreter.Value {
+    pub fn get(self: *Self, name: []const u8) ?*interpreter.Value {
         return self.values.get(name);
     }
 
-    pub fn assignInParent(self: *Self, steps: u16, name: []const u8, value: interpreter.Value) EnvironmentError!void {
+    pub fn assignInParent(self: *Self, steps: u16, name: []const u8, value: *interpreter.Value) EnvironmentError!void {
         return self.ancestor(steps).assign(name, value);
     }
 
-    pub fn assign(self: *Self, name: []const u8, value: interpreter.Value) EnvironmentError!void {
+    pub fn assign(self: *Self, name: []const u8, value: *interpreter.Value) EnvironmentError!void {
         if (self.values.getPtr(name)) |ptr| {
-            const new_value = try value.clone(self.allocator);
-            ptr.*.deinit(self.allocator);
-            ptr.* = new_value;
+            ptr.*.deinit();
+            value.ref += 1;
+            ptr.* = value;
             return;
         }
 
