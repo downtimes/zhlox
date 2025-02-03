@@ -22,14 +22,14 @@ var box = Box();
 box.function = notMethod;
 box.function("argument"); // Prints "called function with argument"
 
-// // Call method on class instance
-// class Bacon {
-//   eat() {
-//     print "Crunch crunch crunch!";
-//   }
-// }
+// Call method on class instance
+class Bacon {
+  eat() {
+    print "Crunch crunch crunch!";
+  }
+}
 
-// Bacon().eat(); // Prints "Crunch crunch crunch!".
+Bacon().eat(); // Prints "Crunch crunch crunch!".
 
 // // Access to the instance via this
 // class Cake {

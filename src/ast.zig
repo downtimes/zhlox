@@ -67,7 +67,7 @@ pub const Return = struct {
 
 pub const Class = struct {
     name: token.Token,
-    methods: std.ArrayListUnmanaged(Stmt),
+    methods: std.ArrayListUnmanaged(Function),
 };
 
 pub const Stmt = union(enum) {

@@ -22,6 +22,7 @@ const Function = struct {
 
 const Class = struct {
     name: []const u8, // This memory is not owned, it points into input_scratch.
+    methods: std.StringHashMap(Function),
 };
 
 const Instance = struct {
@@ -44,6 +45,16 @@ pub const Represent = union(enum) {
     fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .string => |s| allocator.free(s),
+            .class => |*c| {
+                var it = c.methods.valueIterator();
+                while (it.next()) |m| {
+                    if (m.env.refs > 0) {
+                        m.env.refs -= 1;
+                        m.env.clean_unused(true);
+                    }
+                }
+                c.methods.deinit();
+            },
             .instance => |*i| {
                 var it = i.fields.valueIterator();
                 while (it.next()) |v| {
@@ -408,9 +419,23 @@ pub const Interpreter = struct {
                     value.deinit();
                 }
             },
-            .class => |c| {
+            .class => |*c| {
                 try self.active_environment.define(c.name.lexeme, nil);
-                const val = try Value.init(self.allocator, Represent{ .class = Class{ .name = c.name.lexeme } });
+
+                var methods = std.StringHashMap(Function).init(self.allocator);
+                try methods.ensureTotalCapacity(@intCast(c.methods.items.len));
+                for (c.methods.items) |*m| {
+                    const function = Function{ .declaration = m, .env = self.active_environment };
+                    self.active_environment.refs += 1;
+                    try methods.put(m.name.lexeme, function);
+                }
+
+                const val = try Value.init(self.allocator, Represent{
+                    .class = Class{
+                        .name = c.name.lexeme,
+                        .methods = methods,
+                    },
+                });
                 defer val.deinit();
                 self.active_environment.assign(c.name.lexeme, val) catch {
                     // Do nothing since we defined the variable before so this case is never hit.
@@ -504,14 +529,20 @@ pub const Interpreter = struct {
                         if (val) |v| {
                             v.ref += 1;
                             return v;
-                        } else {
-                            self.diagnostic = Diagnostic{
-                                .line_number = g.name.line,
-                                .input = g.name.lexeme,
-                                .message = "Unknown property.",
-                            };
-                            return RuntimeError.UnknownProperty;
                         }
+
+                        const method = i.class.methods.get(g.name.lexeme);
+                        if (method) |m| {
+                            m.env.refs += 1;
+                            return Value.init(arena, Represent{ .function = m });
+                        }
+
+                        self.diagnostic = Diagnostic{
+                            .line_number = g.name.line,
+                            .input = g.name.lexeme,
+                            .message = "Unknown property.",
+                        };
+                        return RuntimeError.UnknownProperty;
                     },
                     else => {},
                 }

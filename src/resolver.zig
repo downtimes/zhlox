@@ -7,6 +7,7 @@ const interpreter = @import("interpreter.zig");
 const FunctionType = enum {
     none,
     function,
+    method,
 };
 
 // Has to work in tandem with the creation of environments in the interpreter.
@@ -63,15 +64,18 @@ pub const Resolver = struct {
             },
             .class => |*c| {
                 try self.declare(c.name);
+
+                for (c.methods.items) |*m| {
+                    // We know only function definitions parse inside of classes.
+                    try self.resolveFunction(m, FunctionType.method);
+                }
+
                 try self.define(c.name.lexeme);
             },
             .function => |*f| {
-                const enclosing_function_type = self.current_function_type;
-                self.current_function_type = FunctionType.function;
-                defer self.current_function_type = enclosing_function_type;
                 try self.declare(f.name);
                 try self.define(f.name.lexeme);
-                try self.resolveFunction(f);
+                try self.resolveFunction(f, FunctionType.function);
             },
             .expr => |*e| {
                 try self.resolveExpr(e);
@@ -106,13 +110,17 @@ pub const Resolver = struct {
         }
     }
 
-    fn resolveFunction(self: *Self, function: *ast.Function) std.mem.Allocator.Error!void {
+    fn resolveFunction(self: *Self, f: *ast.Function, t: FunctionType) !void {
+        const enclosing_function_type = self.current_function_type;
+        self.current_function_type = t;
+        defer self.current_function_type = enclosing_function_type;
+
         try self.begin_scope();
-        for (function.params.items) |param| {
+        for (f.params.items) |param| {
             try self.declare(param);
             try self.define(param.lexeme);
         }
-        try self.resolve(function.body.items);
+        try self.resolve(f.body.items);
         self.end_scope();
     }
 

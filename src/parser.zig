@@ -96,9 +96,10 @@ pub const Parser = struct {
         const identifier = self.previous();
         try self.consume(token.Type.left_brace, "Expected '{' before class body.");
 
-        var methods = std.ArrayList(ast.Stmt).init(self.allocator);
+        var methods = std.ArrayList(ast.Function).init(self.allocator);
         while (!self.check(token.Type.right_brace) and !self.isAtEnd()) {
-            try methods.append(try self.function(FunctionKind.method));
+            const fun = try self.function(FunctionKind.method);
+            try methods.append(fun.function);
         }
 
         try self.consume(token.Type.right_brace, "Expected '}' after class body.");
