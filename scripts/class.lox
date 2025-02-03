@@ -11,16 +11,16 @@ class Bagel {}
 var bagel = Bagel();
 print bagel; // Prints "Bagel instance".
 
-// // Dynamically attaching functions
-// class Box {}
+// Dynamically attaching functions
+class Box {}
 
-// fun notMethod(argument) {
-//   print "called function with " + argument;
-// }
+fun notMethod(argument) {
+  print "called function with " + argument;
+}
 
-// var box = Box();
-// box.function = notMethod;
-// box.function("argument"); // Prints "called function with argument"
+var box = Box();
+box.function = notMethod;
+box.function("argument"); // Prints "called function with argument"
 
 // // Call method on class instance
 // class Bacon {

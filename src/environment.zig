@@ -69,6 +69,7 @@ pub const Environment = struct {
             c.deinit();
         }
         self.children.deinit();
+        self.refs = 0;
 
         if (self.parent) |p| {
             p.remove_child(self);
@@ -96,10 +97,10 @@ pub const Environment = struct {
     pub fn define(self: *Self, name: []const u8, value: *interpreter.Value) !void {
         // We allow shadowing of variables by removing entries instead of blocking addition.
         const resp = try self.values.getOrPut(name);
+        value.ref += 1;
         if (resp.found_existing) {
             resp.value_ptr.*.deinit();
         }
-        value.ref += 1;
         resp.value_ptr.* = value;
     }
 
@@ -123,7 +124,11 @@ pub const Environment = struct {
     }
 
     pub fn get(self: *Self, name: []const u8) ?*interpreter.Value {
-        return self.values.get(name);
+        const val = self.values.get(name);
+        if (val) |v| {
+            v.ref += 1;
+        }
+        return val;
     }
 
     pub fn assignInParent(self: *Self, steps: u16, name: []const u8, value: *interpreter.Value) EnvironmentError!void {
@@ -132,8 +137,8 @@ pub const Environment = struct {
 
     pub fn assign(self: *Self, name: []const u8, value: *interpreter.Value) EnvironmentError!void {
         if (self.values.getPtr(name)) |ptr| {
-            ptr.*.deinit();
             value.ref += 1;
+            ptr.*.deinit();
             ptr.* = value;
             return;
         }

@@ -44,16 +44,18 @@ pub const Represent = union(enum) {
     fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .string => |s| allocator.free(s),
-            .instance => |i| {
+            .instance => |*i| {
                 var it = i.fields.valueIterator();
                 while (it.next()) |v| {
                     v.*.deinit();
                 }
+                i.fields.deinit();
             },
             .function => |*f| {
-                std.debug.assert(f.env.refs != 0);
-                f.env.refs -= 1;
-                f.env.clean_unused(true);
+                if (f.env.refs > 0) {
+                    f.env.refs -= 1;
+                    f.env.clean_unused(true);
+                }
             },
             else => {},
         }
@@ -97,12 +99,10 @@ pub const Represent = union(enum) {
                 if (arguments.len != 0) {
                     return ValueError.Arity;
                 }
-                const val = try arena.create(Value);
-                val.repr = Represent{ .instance = Instance{
+                return Value.init(arena, Represent{ .instance = Instance{
                     .class = c,
                     .fields = std.StringHashMap(*Value).init(arena),
-                } };
-                return val;
+                } });
             },
             .function => |*f| {
                 const func = f.declaration;
@@ -287,14 +287,27 @@ pub const Interpreter = struct {
                     _ = try self.output.write("Hit unimplemented part of the interpreter.");
                 } else {
                     const diagnostic = self.diagnostic.?;
-                    main.reportError(diagnostic.line_number, &[_][]const u8{ "Runtime Error: '", diagnostic.input, "' ", diagnostic.message });
+                    main.reportError(
+                        diagnostic.line_number,
+                        &[_][]const u8{
+                            "Runtime Error: '",
+                            diagnostic.input,
+                            "' ",
+                            diagnostic.message,
+                        },
+                    );
                 }
                 return err;
             };
         }
     }
 
-    fn executeBlock(self: *Self, statements: []ast.Stmt, env: *environment.Environment, arena: std.mem.Allocator) RuntimeError!*Value {
+    fn executeBlock(
+        self: *Self,
+        statements: []ast.Stmt,
+        env: *environment.Environment,
+        arena: std.mem.Allocator,
+    ) RuntimeError!*Value {
         var block_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer block_arena.deinit();
 
@@ -303,15 +316,17 @@ pub const Interpreter = struct {
 
         self.active_environment = env;
         for (statements) |*statement| {
-            const val = try self.executeStatement(statement, block_arena.allocator());
+            var val = try self.executeStatement(statement, block_arena.allocator());
+            errdefer val.deinit();
             if (val.repr != Represent.nil) {
-                // We delete our arena for the block before returning so we
-                // need to make sure we hoist the value out to the arena outside
-                // of the current block to not get a dangling pointer.
-                const copy = try val.repr.clone(arena);
-                std.debug.assert(val.ref == 1); // Makes sure that we don't have any dangling refs.
+                // If ref is 1 the value is allocated in the block arena and needs
+                // to be hoisted to the outer arena.
+                if (val.ref == 1) {
+                    val = try Value.init(arena, try val.repr.clone(arena));
+                }
+                return val;
+            } else {
                 val.deinit();
-                return Value.init(arena, copy);
             }
         }
         return try Value.init(arena, Represent.nil);
@@ -322,6 +337,7 @@ pub const Interpreter = struct {
         switch (stmt.*) {
             .cond => |*c| {
                 const cond = try self.evaluateExpression(&c.condition, arena);
+                defer cond.deinit();
                 if (cond.isTruthy()) {
                     return try self.executeStatement(c.then, arena);
                 } else if (c.els != null) {
@@ -329,7 +345,8 @@ pub const Interpreter = struct {
                 }
             },
             .expr => |*e| {
-                _ = try self.evaluateExpression(e, arena);
+                const val = try self.evaluateExpression(e, arena);
+                val.deinit();
             },
             .print => |*e| {
                 const value = try self.evaluateExpression(e, arena);
@@ -346,27 +363,37 @@ pub const Interpreter = struct {
                     },
                 }
                 _ = try self.output.write("\n");
+                value.deinit();
             },
             .while_ => |*w| {
                 var cond = try self.evaluateExpression(&w.condition, arena);
+                defer cond.deinit();
 
                 while (cond.isTruthy()) {
                     for (w.body.items) |*s| {
                         const value = try self.executeStatement(s, arena);
                         if (value.repr != Represent.nil) {
                             return value;
+                        } else {
+                            value.deinit();
                         }
                     }
+                    cond.deinit();
                     cond = try self.evaluateExpression(&w.condition, arena);
                 }
             },
             .var_decl => |*decl| {
-                var val: *Value = try Value.init(arena, Represent.nil);
+                var val: *Value = nil;
+                defer val.deinit();
                 if (decl.initializer) |*initializer| {
                     val = try self.evaluateExpression(initializer, arena);
                 }
 
-                // TODO: put the value in global allocator.
+                // Signal for the value is only in an arena for now.
+                if (val.ref == 1) {
+                    val = try Value.init(self.allocator, try val.repr.clone(self.allocator));
+                }
+
                 try self.active_environment.define(decl.name.lexeme, val);
             },
             .block => |statements| {
@@ -377,6 +404,8 @@ pub const Interpreter = struct {
                 const value = try self.executeBlock(statements.items, new_env, arena);
                 if (value.repr != Represent.nil) {
                     return value;
+                } else {
+                    value.deinit();
                 }
             },
             .class => |c| {
@@ -436,6 +465,7 @@ pub const Interpreter = struct {
             },
             .unary => |u| {
                 const right = try self.evaluateExpression(u.right, arena);
+                defer right.deinit();
 
                 if (u.operator.type_ == token.Type.bang) {
                     return Value.init(arena, Represent{ .bool_ = !right.isTruthy() });
@@ -466,10 +496,13 @@ pub const Interpreter = struct {
             },
             .get => |g| {
                 const object = try self.evaluateExpression(g.object, arena);
+                defer object.deinit();
+
                 switch (object.repr) {
                     .instance => |*i| {
                         const val = i.fields.get(g.name.lexeme);
                         if (val) |v| {
+                            v.ref += 1;
                             return v;
                         } else {
                             self.diagnostic = Diagnostic{
@@ -491,14 +524,22 @@ pub const Interpreter = struct {
             },
             .set => |s| {
                 const object = try self.evaluateExpression(s.object, arena);
+                defer object.deinit();
+
                 switch (object.repr) {
                     .instance => |*i| {
-                        const value = try self.evaluateExpression(s.value, arena);
+                        var value = try self.evaluateExpression(s.value, arena);
+                        errdefer value.deinit();
+                        // Signal that the value is only allocated in arena.
+                        // Move to global storage.
+                        if (value.ref == 1) {
+                            value = try Value.init(self.allocator, try value.repr.clone(self.allocator));
+                        }
                         const resp = try i.fields.getOrPut(s.name.lexeme);
+                        value.ref += 1;
                         if (resp.found_existing) {
                             resp.value_ptr.*.deinit();
                         }
-                        value.ref += 1;
                         resp.value_ptr.* = value;
                         return value;
                     },
@@ -513,7 +554,11 @@ pub const Interpreter = struct {
             },
             .call => |call| {
                 var callee = try self.evaluateExpression(call.callee, arena);
+                defer callee.deinit();
                 var arguments = std.ArrayList(*Value).init(arena);
+                defer for (arguments.items) |arg| {
+                    arg.deinit();
+                };
 
                 for (call.arguments.items) |*arg| {
                     try arguments.append(try self.evaluateExpression(arg, arena));
@@ -568,9 +613,13 @@ pub const Interpreter = struct {
 
     fn evaluateBinary(self: *Self, binary: ast.Binary, arena: std.mem.Allocator) RuntimeError!*Value {
         const left = try self.evaluateExpression(binary.left, arena);
+        defer left.deinit();
         const right = try self.evaluateExpression(binary.right, arena);
+        defer right.deinit();
 
-        if (@as(std.meta.Tag(Represent), left.repr) == .number and @as(std.meta.Tag(Represent), right.repr) == .number) {
+        if (@as(std.meta.Tag(Represent), left.repr) == .number and
+            @as(std.meta.Tag(Represent), right.repr) == .number)
+        {
             switch (binary.operator.type_) {
                 .minus => return Value.init(arena, Represent{
                     .number = left.repr.number - right.repr.number,
@@ -605,7 +654,9 @@ pub const Interpreter = struct {
             }
         }
 
-        if (@as(std.meta.Tag(Represent), left.repr) == .string and @as(std.meta.Tag(Represent), right.repr) == .string) {
+        if (@as(std.meta.Tag(Represent), left.repr) == .string and
+            @as(std.meta.Tag(Represent), right.repr) == .string)
+        {
             if (binary.operator.type_ == .plus) {
                 const combined = try std.mem.concat(arena, u8, &[_][]const u8{ left.repr.string, right.repr.string });
                 return Value.init(arena, Represent{ .string = combined });
@@ -640,7 +691,13 @@ pub const Interpreter = struct {
     }
 
     fn evaluateAssignment(self: *Self, assignment: ast.Assignment, arena: std.mem.Allocator) RuntimeError!*Value {
-        const value = try self.evaluateExpression(assignment.value, arena);
+        var value = try self.evaluateExpression(assignment.value, arena);
+        errdefer value.deinit();
+
+        // Signal that the value only lives in arena allocation for now. move it into global allocator.
+        if (value.ref == 1) {
+            value = try Value.init(self.allocator, try value.repr.clone(self.allocator));
+        }
 
         var res: environment.EnvironmentError!void = undefined;
         if (assignment.variable.resolve_steps) |steps| {
