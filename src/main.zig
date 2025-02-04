@@ -61,7 +61,7 @@ pub fn main() !void {
     var args = try std.process.argsWithAllocator(gpa.allocator());
     defer args.deinit();
 
-    //skip over our own programm name.
+    //skip over our own program name.
     _ = args.skip();
 
     const path = args.next();

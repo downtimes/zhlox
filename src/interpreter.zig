@@ -221,7 +221,7 @@ pub const RuntimeError = error{
     OutOfMemory,
     NonInstance,
     UnknownProperty,
-} || std.fs.File.WriteError;
+} || std.io.AnyWriter.Error;
 
 pub const Diagnostic = struct {
     line_number: u32,
@@ -234,7 +234,7 @@ pub const Interpreter = struct {
 
     global_environment: *environment.Environment,
     active_environment: *environment.Environment,
-    output: std.fs.File.Writer,
+    output: std.io.AnyWriter,
     allocator: std.mem.Allocator,
     diagnostic: ?Diagnostic = null,
 
@@ -260,7 +260,7 @@ pub const Interpreter = struct {
 
     pub fn run(
         self: *Self,
-        stdout: std.fs.File.Writer,
+        output: anytype,
         input: []const u8,
         input_scratch: std.mem.Allocator,
     ) !void {
@@ -284,7 +284,7 @@ pub const Interpreter = struct {
         }
 
         self.active_environment = self.global_environment;
-        self.output = stdout;
+        self.output = output.any();
         try self.execute(parse_tree.statements.items);
     }
 
