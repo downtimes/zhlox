@@ -502,7 +502,9 @@ pub const Parser = struct {
             return ast.Expr{ .literal = literal };
         }
 
-        if (self.match(&[_]token.Type{token.Type.identifier})) {
+        if (self.match(&[_]token.Type{token.Type.identifier}) or
+            self.match(&[_]token.Type{token.Type.this}))
+        {
             return ast.Expr{ .variable = ast.Variable{
                 .name = self.previous(),
                 .resolve_steps = null,

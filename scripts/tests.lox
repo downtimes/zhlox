@@ -1,9 +1,5 @@
-var a = "outer";
-{
-  print a; //outer
-  var a = "inner";
-}
-{
-  var a = "inner";
-  print a; //inner
+print this;
+
+fun a() {
+  return this;
 }

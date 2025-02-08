@@ -533,8 +533,20 @@ pub const Interpreter = struct {
 
                         const method = i.class.methods.get(g.name.lexeme);
                         if (method) |m| {
-                            m.env.refs += 1;
-                            return Value.init(arena, Represent{ .function = m });
+                            var bound = try environment.Environment.create_with_parent(self.allocator, m.env);
+                            // This call saves the fields we had when we we get the method
+                            // I'm not sure this is semantically the same as what lox should be
+                            // what happens when a field is later added to the instance?
+                            const instance = try Value.init(self.allocator, try object.repr.clone(self.allocator));
+                            defer instance.deinit();
+                            try bound.define(scanner.this, instance);
+                            bound.refs += 1;
+                            return Value.init(arena, Represent{
+                                .function = Function{
+                                    .declaration = m.declaration,
+                                    .env = bound,
+                                },
+                            });
                         }
 
                         self.diagnostic = Diagnostic{

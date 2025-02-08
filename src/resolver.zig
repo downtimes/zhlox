@@ -2,12 +2,18 @@ const std = @import("std");
 const ast = @import("ast.zig");
 const main = @import("main.zig");
 const token = @import("token.zig");
+const scanner = @import("scanner.zig");
 const interpreter = @import("interpreter.zig");
 
 const FunctionType = enum {
     none,
     function,
     method,
+};
+
+const ClassType = enum {
+    none,
+    class,
 };
 
 // Has to work in tandem with the creation of environments in the interpreter.
@@ -26,6 +32,7 @@ pub const Resolver = struct {
     scopes: std.ArrayList(std.StringArrayHashMap(bool)),
     found_error: bool,
     current_function_type: FunctionType,
+    current_class_type: ClassType,
 
     pub fn init(arena: *std.heap.ArenaAllocator) Self {
         return Resolver{
@@ -33,6 +40,7 @@ pub const Resolver = struct {
             .scopes = std.ArrayList(std.StringArrayHashMap(bool)).init(arena.allocator()),
             .found_error = false,
             .current_function_type = FunctionType.none,
+            .current_class_type = ClassType.none,
         };
     }
 
@@ -63,13 +71,21 @@ pub const Resolver = struct {
                 try self.define(vd.name.lexeme);
             },
             .class => |*c| {
+                const old_class = self.current_class_type;
+                self.current_class_type = ClassType.class;
+                defer self.current_class_type = old_class;
+
                 try self.declare(c.name);
+
+                try self.begin_scope();
+                try self.define(scanner.this);
 
                 for (c.methods.items) |*m| {
                     // We know only function definitions parse inside of classes.
                     try self.resolveFunction(m, FunctionType.method);
                 }
 
+                self.end_scope();
                 try self.define(c.name.lexeme);
             },
             .function => |*f| {
@@ -127,6 +143,18 @@ pub const Resolver = struct {
     fn resolveExpr(self: *Self, expr: *ast.Expr) !void {
         switch (expr.*) {
             .variable => |*v| {
+                // Check for this outside of class
+                if (std.mem.eql(u8, v.name.lexeme, scanner.this) and
+                    self.current_class_type == ClassType.none)
+                {
+                    main.reportError(v.name.line, &[_][]const u8{
+                        "Resolver Error: '", scanner.this, "' can't use outside of a class.",
+                    });
+                    self.found_error = true;
+                    return;
+                }
+
+                // Don't resolve global variables.
                 const scope = self.scopes.getLastOrNull();
                 if (scope) |s| {
                     if (s.get(v.name.lexeme)) |assign_finished| {
