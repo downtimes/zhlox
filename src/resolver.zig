@@ -58,7 +58,7 @@ pub const Resolver = struct {
         switch (stmt.*) {
             .block => |b| {
                 try self.begin_scope();
-                for (b.items) |*s| {
+                for (b) |*s| {
                     try self.resolveStmt(s);
                 }
                 self.end_scope();
@@ -80,7 +80,7 @@ pub const Resolver = struct {
                 try self.begin_scope();
                 try self.define(scanner.this);
 
-                for (c.methods.items) |*m| {
+                for (c.methods) |*m| {
                     // We know only function definitions parse inside of classes.
                     try self.resolveFunction(m, FunctionType.method);
                 }
@@ -121,7 +121,7 @@ pub const Resolver = struct {
             },
             .while_ => |*w| {
                 try self.resolveExpr(&w.condition);
-                try self.resolve(w.body.items);
+                try self.resolve(w.body);
             },
         }
     }
@@ -132,11 +132,11 @@ pub const Resolver = struct {
         defer self.current_function_type = enclosing_function_type;
 
         try self.begin_scope();
-        for (f.params.items) |param| {
+        for (f.params) |param| {
             try self.declare(param);
             try self.define(param.lexeme);
         }
-        try self.resolve(f.body.items);
+        try self.resolve(f.body);
         self.end_scope();
     }
 
@@ -192,7 +192,7 @@ pub const Resolver = struct {
             .call => |*c| {
                 try self.resolveExpr(c.callee);
 
-                for (c.arguments.items) |*arg| {
+                for (c.arguments) |*arg| {
                     try self.resolveExpr(arg);
                 }
             },

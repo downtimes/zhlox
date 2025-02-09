@@ -56,3 +56,17 @@ class Thing {
 
 var callback = Thing().getCallback();
 callback(); // Prints "Thing instance"
+
+// Class with constructor
+class Const {
+  init(name) {
+    this.name = name;
+  }
+
+  sayName() {
+    print this.name;
+  }
+}
+
+var const = Const("Mathilde");
+const.sayName(); // Prints "Mathilde"

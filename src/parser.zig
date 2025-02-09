@@ -39,9 +39,9 @@ pub const Parser = struct {
         }
     }
 
-    pub fn parseInto(self: *Self, input_scratch: std.mem.Allocator) ParseError!ast.Ast {
+    pub fn parseInto(self: *Self, input_scratch: std.mem.Allocator) ParseError![]ast.Stmt {
         self.allocator = input_scratch;
-        var result = try ast.Ast.init(self.allocator);
+        var result = std.ArrayList(ast.Stmt).init(self.allocator);
 
         var last_err: ?ParseError = null;
         while (!self.isAtEnd()) {
@@ -56,7 +56,10 @@ pub const Parser = struct {
                 if (self.diagnostic != null) {
                     const diagnostic = self.diagnostic.?;
                     const found = self.diagnostic.?.found;
-                    main.reportError(diagnostic.found.line, &[_][]const u8{ "Parse Error: '", found.lexeme, "' ", diagnostic.message });
+                    main.reportError(
+                        diagnostic.found.line,
+                        &[_][]const u8{ "Parse Error: '", found.lexeme, "' ", diagnostic.message },
+                    );
                 }
 
                 // In case of invalid assignment the parsing found an error but we are not confused about the state
@@ -74,7 +77,7 @@ pub const Parser = struct {
             return last_err.?;
         }
 
-        return result;
+        return result.toOwnedSlice();
     }
 
     fn declaration(self: *Self) Stmt {
@@ -106,7 +109,7 @@ pub const Parser = struct {
 
         return ast.Stmt{ .class = ast.Class{
             .name = identifier,
-            .methods = methods.moveToUnmanaged(),
+            .methods = try methods.toOwnedSlice(),
         } };
     }
 
@@ -137,7 +140,11 @@ pub const Parser = struct {
 
         try self.consume(token.Type.left_brace, "Expected '{' before function body.");
         const body = try self.block();
-        return ast.Stmt{ .function = ast.Function{ .name = name, .params = params.moveToUnmanaged(), .body = body } };
+        return ast.Stmt{ .function = ast.Function{
+            .name = name,
+            .params = try params.toOwnedSlice(),
+            .body = body,
+        } };
     }
 
     fn variableDeclaration(self: *Self) Stmt {
@@ -182,7 +189,7 @@ pub const Parser = struct {
         return ast.Stmt{ .cond = ast.Conditional{ .condition = condition, .then = then, .els = els } };
     }
 
-    fn block(self: *Self) ParseError!std.ArrayListUnmanaged(ast.Stmt) {
+    fn block(self: *Self) ParseError![]ast.Stmt {
         var statements = std.ArrayList(ast.Stmt).init(self.allocator);
 
         while (!self.check(token.Type.right_brace) and !self.isAtEnd()) {
@@ -191,7 +198,7 @@ pub const Parser = struct {
         }
 
         try self.consume(token.Type.right_brace, "Expected '}' at the end of a block.");
-        return statements.moveToUnmanaged();
+        return statements.toOwnedSlice();
     }
 
     fn printStatement(self: *Self) Stmt {
@@ -235,7 +242,9 @@ pub const Parser = struct {
             .block => |*b| {
                 // Stuff the increment after the while body.
                 if (after) |a| {
-                    try b.append(self.allocator, ast.Stmt{ .expr = a });
+                    var append = std.ArrayList(ast.Stmt).fromOwnedSlice(self.allocator, b.*);
+                    try append.append(ast.Stmt{ .expr = a });
+                    b.* = try append.toOwnedSlice();
                 }
                 body = ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = b.* } };
             },
@@ -246,7 +255,10 @@ pub const Parser = struct {
                 if (after) |a| {
                     try while_body.append(ast.Stmt{ .expr = a });
                 }
-                body = ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = while_body.moveToUnmanaged() } };
+                body = ast.Stmt{ .while_ = ast.WhileStmt{
+                    .condition = cond,
+                    .body = try while_body.toOwnedSlice(),
+                } };
             },
         }
 
@@ -254,7 +266,7 @@ pub const Parser = struct {
             var sugar = std.ArrayList(ast.Stmt).init(self.allocator);
             try sugar.append(i);
             try sugar.append(body);
-            body = ast.Stmt{ .block = sugar.moveToUnmanaged() };
+            body = ast.Stmt{ .block = try sugar.toOwnedSlice() };
         }
 
         return body;
@@ -284,7 +296,10 @@ pub const Parser = struct {
             else => {
                 var statements = std.ArrayList(ast.Stmt).init(self.allocator);
                 try statements.append(stmt);
-                return ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = statements.moveToUnmanaged() } };
+                return ast.Stmt{ .while_ = ast.WhileStmt{
+                    .condition = cond,
+                    .body = try statements.toOwnedSlice(),
+                } };
             },
         }
     }
@@ -478,7 +493,7 @@ pub const Parser = struct {
         return ast.Expr{ .call = ast.Call{
             .callee = callee_place,
             .line_number = closing_paren.line,
-            .arguments = arguments.moveToUnmanaged(),
+            .arguments = try arguments.toOwnedSlice(),
         } };
     }
 

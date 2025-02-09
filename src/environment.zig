@@ -15,7 +15,7 @@ pub const Environment = struct {
     allocator: std.mem.Allocator,
     parent: ?*Environment,
     children: std.ArrayList(*Environment),
-    values: std.StringHashMap(*interpreter.Value),
+    values: std.StringHashMap(*interpreter.Rc),
     refs: u32,
 
     // Parent environment must be valid as long as this environment is used.
@@ -32,7 +32,7 @@ pub const Environment = struct {
             .allocator = allocator,
             .parent = null,
             .children = std.ArrayList(*Environment).init(allocator),
-            .values = std.StringHashMap(*interpreter.Value).init(allocator),
+            .values = std.StringHashMap(*interpreter.Rc).init(allocator),
             .refs = 0,
         };
         return env_place;
@@ -94,10 +94,10 @@ pub const Environment = struct {
         }
     }
 
-    pub fn define(self: *Self, name: []const u8, value: *interpreter.Value) !void {
+    pub fn define(self: *Self, name: []const u8, value: *interpreter.Rc) !void {
         // We allow shadowing of variables by removing entries instead of blocking addition.
         const resp = try self.values.getOrPut(name);
-        value.ref += 1;
+        value.ref();
         if (resp.found_existing) {
             resp.value_ptr.*.deinit();
         }
@@ -119,25 +119,25 @@ pub const Environment = struct {
         return env;
     }
 
-    pub fn getInParent(self: *Self, steps: u16, name: []const u8) ?*interpreter.Value {
+    pub fn getInParent(self: *Self, steps: u16, name: []const u8) ?*interpreter.Rc {
         return self.ancestor(steps).get(name);
     }
 
-    pub fn get(self: *Self, name: []const u8) ?*interpreter.Value {
+    pub fn get(self: *Self, name: []const u8) ?*interpreter.Rc {
         const val = self.values.get(name);
         if (val) |v| {
-            v.ref += 1;
+            v.ref();
         }
         return val;
     }
 
-    pub fn assignInParent(self: *Self, steps: u16, name: []const u8, value: *interpreter.Value) EnvironmentError!void {
+    pub fn assignInParent(self: *Self, steps: u16, name: []const u8, value: *interpreter.Rc) EnvironmentError!void {
         return self.ancestor(steps).assign(name, value);
     }
 
-    pub fn assign(self: *Self, name: []const u8, value: *interpreter.Value) EnvironmentError!void {
+    pub fn assign(self: *Self, name: []const u8, value: *interpreter.Rc) EnvironmentError!void {
         if (self.values.getPtr(name)) |ptr| {
-            value.ref += 1;
+            value.ref();
             ptr.*.deinit();
             ptr.* = value;
             return;

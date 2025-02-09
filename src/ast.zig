@@ -16,14 +16,14 @@ pub const Unary = struct {
 
 pub const Function = struct {
     name: token.Token,
-    params: std.ArrayListUnmanaged(token.Token),
-    body: std.ArrayListUnmanaged(Stmt),
+    params: []token.Token,
+    body: []Stmt,
 };
 
 pub const Call = struct {
     callee: *Expr,
     line_number: u32,
-    arguments: std.ArrayListUnmanaged(Expr),
+    arguments: []Expr,
 };
 
 pub const Literal = union(enum) {
@@ -57,7 +57,7 @@ pub const Logical = struct {
 
 pub const WhileStmt = struct {
     condition: Expr,
-    body: std.ArrayListUnmanaged(Stmt),
+    body: []Stmt,
 };
 
 pub const Return = struct {
@@ -67,7 +67,7 @@ pub const Return = struct {
 
 pub const Class = struct {
     name: token.Token,
-    methods: std.ArrayListUnmanaged(Function),
+    methods: []Function,
 };
 
 pub const Stmt = union(enum) {
@@ -79,7 +79,7 @@ pub const Stmt = union(enum) {
     function: Function,
     class: Class,
     ret: Return,
-    block: std.ArrayListUnmanaged(Stmt),
+    block: []Stmt,
 };
 
 pub const Variable = struct {
@@ -109,27 +109,4 @@ pub const Expr = union(enum) {
     set: Set,
     variable: Variable,
     assign: Assignment,
-};
-
-pub const Ast = struct {
-    const Self = @This();
-
-    arena: std.heap.ArenaAllocator,
-    statements: std.ArrayListUnmanaged(Stmt),
-
-    pub fn init(allocator: std.mem.Allocator) !Self {
-        const result = Ast{
-            .arena = std.heap.ArenaAllocator.init(allocator),
-            .statements = std.ArrayListUnmanaged(Stmt){},
-        };
-        return result;
-    }
-
-    pub fn deinit(self: *Self) void {
-        self.arena.deinit();
-    }
-
-    pub fn append(self: *Self, statement: Stmt) !void {
-        try self.statements.append(self.arena.allocator(), statement);
-    }
 };
