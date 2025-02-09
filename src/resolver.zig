@@ -3,11 +3,12 @@ const ast = @import("ast.zig");
 const main = @import("main.zig");
 const token = @import("token.zig");
 const scanner = @import("scanner.zig");
-const interpreter = @import("interpreter.zig");
+const constants = @import("constants.zig");
 
 const FunctionType = enum {
     none,
     function,
+    constructor,
     method,
 };
 
@@ -78,11 +79,14 @@ pub const Resolver = struct {
                 try self.declare(c.name);
 
                 try self.begin_scope();
-                try self.define(scanner.this);
+                try self.define(constants.this);
 
                 for (c.methods) |*m| {
-                    // We know only function definitions parse inside of classes.
-                    try self.resolveFunction(m, FunctionType.method);
+                    const type_ = if (std.mem.eql(u8, m.name.lexeme, constants.constructor))
+                        FunctionType.constructor
+                    else
+                        FunctionType.method;
+                    try self.resolveFunction(m, type_);
                 }
 
                 self.end_scope();
@@ -114,8 +118,18 @@ pub const Resolver = struct {
                             "Resolver Error: return statement only allowed inside functions.",
                         },
                     );
+                    self.found_error = true;
                 }
                 if (r.value) |*v| {
+                    if (self.current_function_type == FunctionType.constructor) {
+                        main.reportError(
+                            r.line_number,
+                            &[_][]const u8{
+                                "Can't return a value from an initializer.",
+                            },
+                        );
+                        self.found_error = true;
+                    }
                     try self.resolveExpr(v);
                 }
             },
@@ -144,11 +158,11 @@ pub const Resolver = struct {
         switch (expr.*) {
             .variable => |*v| {
                 // Check for this outside of class
-                if (std.mem.eql(u8, v.name.lexeme, scanner.this) and
+                if (std.mem.eql(u8, v.name.lexeme, constants.this) and
                     self.current_class_type == ClassType.none)
                 {
                     main.reportError(v.name.line, &[_][]const u8{
-                        "Resolver Error: '", scanner.this, "' can't use outside of a class.",
+                        "Resolver Error: '", constants.this, "' can't use outside of a class.",
                     });
                     self.found_error = true;
                     return;

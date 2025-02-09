@@ -1,8 +1,7 @@
 const std = @import("std");
 const token = @import("token.zig");
 const main = @import("main.zig");
-
-pub const this: []const u8 = "this";
+const constants = @import("constants.zig");
 
 const reserved_words = std.StaticStringMap(token.Type).initComptime(.{
     .{ "and", token.Type.and_ },
@@ -17,7 +16,7 @@ const reserved_words = std.StaticStringMap(token.Type).initComptime(.{
     .{ "print", token.Type.print },
     .{ "return", token.Type.return_ },
     .{ "super", token.Type.super },
-    .{ this, token.Type.this },
+    .{ constants.this, token.Type.this },
     .{ "true", token.Type.true },
     .{ "var", token.Type.var_ },
     .{ "while", token.Type.while_ },

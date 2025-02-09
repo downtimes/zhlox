@@ -6,9 +6,8 @@ const scanner = @import("scanner.zig");
 const parser = @import("parser.zig");
 const resolver = @import("resolver.zig");
 const main = @import("main.zig");
+const constants = @import("constants.zig");
 const Allocator = std.mem.Allocator;
-
-const constructor_constant: []const u8 = "init";
 
 const ValueError = error{ NonCallable, Arity };
 const CallError = ValueError || RuntimeError;
@@ -42,6 +41,7 @@ pub const Represent = union(enum) {
     number: f64,
     bool_: bool,
     nil: void,
+    ret: void,
     builtin: Builtin,
     function: Function,
     class: Class,
@@ -110,7 +110,7 @@ pub const Represent = union(enum) {
         arena: Allocator,
     ) CallError!Value {
         switch (self.*) {
-            .string, .number, .bool_, .nil, .instance => return ValueError.NonCallable,
+            .string, .number, .bool_, .nil, .instance, .ret => return ValueError.NonCallable,
             .builtin => |f| {
                 if (f.arity != arguments.len) {
                     return ValueError.Arity;
@@ -118,7 +118,7 @@ pub const Represent = union(enum) {
                 return f.function(arena, arguments);
             },
             .class => |c| {
-                const constructor = c.methods.get(constructor_constant);
+                const constructor = c.methods.get(constants.constructor);
                 var arity: usize = 0;
                 if (constructor) |construct| {
                     arity = construct.declaration.params.len;
@@ -140,7 +140,7 @@ pub const Represent = union(enum) {
                 if (constructor) |construct| {
                     defer instance.deinit();
                     var bound = try environment.Environment.create_with_parent(interpreter.allocator, construct.env);
-                    try bound.define(scanner.this, instance.rc);
+                    try bound.define(constants.this, instance.rc);
                     bound.refs += 1;
                     var initialization = Value{ .temp = Represent{
                         .function = Function{
@@ -165,7 +165,13 @@ pub const Represent = union(enum) {
                 defer function_env.clean_unused(true);
 
                 for (func.params, arguments) |param, argument| {
-                    var promoted = try argument.promote(interpreter.allocator);
+                    var promoted = switch (argument) {
+                        .temp => try argument.promote(interpreter.allocator),
+                        .rc => |rc| blk: {
+                            rc.ref();
+                            break :blk argument;
+                        },
+                    };
                     defer promoted.deinit();
                     try function_env.define(param.lexeme, promoted.rc);
                 }
@@ -176,7 +182,7 @@ pub const Represent = union(enum) {
                     value.deinit();
                     // Since we know that we are a constructor, we know that the instance
                     // is bound to this. Therefore we can unwrap the option here.
-                    return Value{ .rc = f.env.getInParent(0, scanner.this).? };
+                    return Value{ .rc = f.env.getInParent(0, constants.this).? };
                 }
                 return value;
             },
@@ -187,19 +193,13 @@ pub const Represent = union(enum) {
     fn isTruthy(self: Self) bool {
         switch (self) {
             .bool_ => |b| return b,
-            .nil => return false,
+            .nil, .ret => return false,
             inline else => return true,
         }
     }
 
     fn equal(self: Self, other: Self) bool {
         switch (self) {
-            .nil => {
-                switch (other) {
-                    .nil => return true,
-                    else => return false,
-                }
-            },
             .string => |s1| {
                 switch (other) {
                     .string => |s2| return std.mem.eql(u8, s1, s2),
@@ -438,7 +438,9 @@ pub const Interpreter = struct {
         self.active_environment = env;
         for (statements) |*statement| {
             var val = try self.executeStatement(statement, block_arena.allocator());
-            if (val.repr() != Represent.nil) {
+            if (val.repr() != Represent.nil or
+                val.repr() == Represent.ret)
+            {
                 return val.promote(self.allocator);
             } else {
                 val.deinit();
@@ -475,6 +477,7 @@ pub const Interpreter = struct {
                     .string => |s| try self.output.print("{s}", .{s}),
                     .bool_ => |b| try self.output.print("{}", .{b}),
                     .nil => _ = try self.output.write("nil"),
+                    .ret => _ = try self.output.write("return"),
                     .builtin => _ = try self.output.write("<native fn>"),
                     .class => |c| try self.output.print("class {s}", .{c.name}),
                     .instance => |i| try self.output.print("{s} instance", .{i.class.name}),
@@ -491,8 +494,10 @@ pub const Interpreter = struct {
                 while (cond.isTruthy()) {
                     for (w.body) |*s| {
                         var value = try self.executeStatement(s, arena);
-                        if (value.repr() != Represent.nil) {
-                            return value;
+                        if (value.repr() != Represent.nil or
+                            value.repr() == Represent.ret)
+                        {
+                            return value.promote(self.allocator);
                         } else {
                             value.deinit();
                         }
@@ -527,7 +532,7 @@ pub const Interpreter = struct {
                 var methods = std.StringHashMap(Function).init(self.allocator);
                 try methods.ensureTotalCapacity(@intCast(c.methods.len));
                 for (c.methods) |*m| {
-                    const constructor = std.mem.eql(u8, m.name.lexeme, constructor_constant);
+                    const constructor = std.mem.eql(u8, m.name.lexeme, constants.constructor);
                     const function = Function{
                         .declaration = m,
                         .env = self.active_environment,
@@ -564,7 +569,7 @@ pub const Interpreter = struct {
                 if (r.value) |*val| {
                     return self.evaluateExpression(val, arena);
                 }
-                return nil;
+                return Value{ .temp = Represent.ret };
             },
         }
         return nil;
@@ -652,7 +657,7 @@ pub const Interpreter = struct {
                             // This call saves the fields we had when we we get the method
                             // I'm not sure this is semantically the same as what lox should be
                             // what happens when a field is later added to the instance?
-                            try bound.define(scanner.this, object.rc);
+                            try bound.define(constants.this, object.rc);
                             bound.refs += 1;
                             return Value{ .temp = Represent{
                                 .function = Function{
@@ -774,37 +779,39 @@ pub const Interpreter = struct {
         defer left.deinit();
         var right = try self.evaluateExpression(binary.right, arena);
         defer right.deinit();
+        const rrepr = right.repr();
+        const lrepr = left.repr();
 
-        if (@as(std.meta.Tag(Represent), left.repr()) == .number and
-            @as(std.meta.Tag(Represent), right.repr()) == .number)
+        if (@as(std.meta.Tag(Represent), lrepr) == .number and
+            @as(std.meta.Tag(Represent), rrepr) == .number)
         {
             switch (binary.operator.type_) {
                 .minus => return Value{ .temp = Represent{
-                    .number = left.repr().number - right.repr().number,
+                    .number = lrepr.number - rrepr.number,
                 } },
                 // TODO possibly create runtime error here when dividing by 0 when nominator not 0 itself,
                 //      currently we return inf since zig does the same. Need to look into how other lox
                 //      interpreters handle this case
                 .slash => return Value{ .temp = Represent{
-                    .number = left.repr().number / right.repr().number,
+                    .number = lrepr.number / rrepr.number,
                 } },
                 .star => return Value{ .temp = Represent{
-                    .number = left.repr().number * right.repr().number,
+                    .number = lrepr.number * rrepr.number,
                 } },
                 .plus => return Value{ .temp = Represent{
-                    .number = left.repr().number + right.repr().number,
+                    .number = lrepr.number + rrepr.number,
                 } },
                 .greater => return Value{ .temp = Represent{
-                    .bool_ = left.repr().number > right.repr().number,
+                    .bool_ = lrepr.number > rrepr.number,
                 } },
                 .greater_equal => return Value{ .temp = Represent{
-                    .bool_ = left.repr().number >= right.repr().number,
+                    .bool_ = lrepr.number >= rrepr.number,
                 } },
                 .less => return Value{ .temp = Represent{
-                    .bool_ = left.repr().number < right.repr().number,
+                    .bool_ = lrepr.number < rrepr.number,
                 } },
                 .less_equal => return Value{ .temp = Represent{
-                    .bool_ = left.repr().number <= right.repr().number,
+                    .bool_ = lrepr.number <= rrepr.number,
                 } },
                 else => {
                     // Do nothing and let the later code handle this case.
@@ -812,11 +819,11 @@ pub const Interpreter = struct {
             }
         }
 
-        if (@as(std.meta.Tag(Represent), left.repr()) == .string and
-            @as(std.meta.Tag(Represent), right.repr()) == .string)
+        if (@as(std.meta.Tag(Represent), lrepr) == .string and
+            @as(std.meta.Tag(Represent), rrepr) == .string)
         {
             if (binary.operator.type_ == .plus) {
-                const combined = try std.mem.concat(arena, u8, &[_][]const u8{ left.repr().string, right.repr().string });
+                const combined = try std.mem.concat(arena, u8, &[_][]const u8{ lrepr.string, rrepr.string });
                 return Value{ .temp = Represent{ .string = combined } };
             }
         }

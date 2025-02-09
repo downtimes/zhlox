@@ -3,3 +3,9 @@ print this;
 fun a() {
   return this;
 }
+
+class Test {
+  init() {
+    return "MyHero";
+  }
+}

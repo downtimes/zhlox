@@ -70,3 +70,25 @@ class Const {
 
 var const = Const("Mathilde");
 const.sayName(); // Prints "Mathilde"
+
+// Class that returns from init
+class Funny {
+  init() {
+    this.name = "Funny";
+    this.val = nil;
+    return;
+    this.val = 55;
+  }
+
+  testFunction() {
+    if (this.val)
+    {
+      print this.val;
+    } else {
+      print this.name;
+    }
+  }
+}
+
+var funny = Funny();
+funny.testFunction(); // Prints "Funny"
