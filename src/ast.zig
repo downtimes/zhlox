@@ -1,7 +1,6 @@
 const std = @import("std");
 const token = @import("token.zig");
 const parser = @import("parser.zig");
-const config = @import("config.zig");
 
 pub const Binary = struct {
     left: *Expr,

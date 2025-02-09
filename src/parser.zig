@@ -2,7 +2,7 @@ const std = @import("std");
 const token = @import("token.zig");
 const main = @import("main.zig");
 const ast = @import("ast.zig");
-const config = @import("config.zig");
+const constants = @import("constants.zig");
 
 const ParseError = error{ UnexpectedToken, InvalidAssignment, OutOfMemory, TooManyArguments };
 
@@ -127,10 +127,13 @@ pub const Parser = struct {
             while (self.match(&[_]token.Type{token.Type.comma})) {
                 try self.consume(token.Type.identifier, "Expected parameter name.");
                 try params.append(self.previous());
-                if (params.items.len >= config.max_params) {
+                if (params.items.len >= constants.max_params) {
                     self.diagnostic = Diagnostic{
                         .found = self.peek(),
-                        .message = std.fmt.comptimePrint("Can't have more than {d} arguments.", .{config.max_params}),
+                        .message = std.fmt.comptimePrint(
+                            "Can't have more than {d} arguments.",
+                            .{constants.max_params},
+                        ),
                     };
                     return ParseError.TooManyArguments;
                 }
@@ -475,10 +478,13 @@ pub const Parser = struct {
             try arguments.append(try self.expression());
             while (self.match(&[_]token.Type{token.Type.comma})) {
                 try arguments.append(try self.expression());
-                if (arguments.items.len >= config.max_params) {
+                if (arguments.items.len >= constants.max_params) {
                     self.diagnostic = Diagnostic{
                         .found = self.peek(),
-                        .message = std.fmt.comptimePrint("Can't have more than {d} arguments.", .{config.max_params}),
+                        .message = std.fmt.comptimePrint(
+                            "Can't have more than {d} arguments.",
+                            .{constants.max_params},
+                        ),
                     };
                     return ParseError.TooManyArguments;
                 }
@@ -517,9 +523,7 @@ pub const Parser = struct {
             return ast.Expr{ .literal = literal };
         }
 
-        if (self.match(&[_]token.Type{token.Type.identifier}) or
-            self.match(&[_]token.Type{token.Type.this}))
-        {
+        if (self.match(&[_]token.Type{ token.Type.identifier, token.Type.this })) {
             return ast.Expr{ .variable = ast.Variable{
                 .name = self.previous(),
                 .resolve_steps = null,
