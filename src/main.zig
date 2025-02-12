@@ -30,12 +30,14 @@ fn runRepl(allocator: std.mem.Allocator) !void {
         _ = try stdout.write("> ");
         try stdin.streamUntilDelimiter(buffer.writer(), '\n', null); //Does not contain the \n!
         if (builtin.os.tag == .windows) {
-            _ = buffer.pop();
+            _ = buffer.pop(); // Pop the \r on windows.
         }
         if (buffer.items.len == 0) break;
-        // In interactive mode we don't want to bring the whole program down
-        // just because the user mistyped something.
-        interpret.run(stdout.writer(), buffer.items, input_allocator) catch {};
+        interpret.run(std.io.getStdOut().writer(), buffer.items, input_allocator) catch {
+            const stderr = std.io.getStdErr().writer();
+            stderr.print("The interpreter ran out of memory.", .{}) catch {};
+            return;
+        };
     }
 }
 
@@ -52,7 +54,10 @@ fn runFile(path: [:0]const u8, allocator: std.mem.Allocator) !void {
     var interpret = try interpreter.Interpreter.new(allocator);
     defer interpret.deinit();
 
-    try interpret.run(std.io.getStdOut().writer(), bytes, input_allocator);
+    interpret.run(std.io.getStdOut().writer(), bytes, input_allocator) catch {
+        const stderr = std.io.getStdErr().writer();
+        stderr.print("The interpreter ran out of memory.", .{}) catch {};
+    };
 }
 
 pub fn main() !void {

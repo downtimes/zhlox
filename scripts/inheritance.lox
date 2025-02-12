@@ -1,3 +1,5 @@
+// The order of these is important, lox does not support inheriting from a class
+// further down in the file.
 class Base {}
 class Derived < Base {}
 

@@ -349,7 +349,7 @@ pub const RuntimeError = error{
     NonInstance,
     UnknownProperty,
     IllegalSuperClass,
-} || std.io.AnyWriter.Error;
+};
 
 pub const Diagnostic = struct {
     line_number: u32,
@@ -393,12 +393,18 @@ pub const Interpreter = struct {
         output: anytype,
         input: []const u8,
         input_scratch: Allocator,
-    ) !void {
+    ) Allocator.Error!void {
         var scan = scanner.Scanner{ .source = input };
         const tokens = try scan.scanTokens(input_scratch);
+        if (scan.had_error) {
+            return;
+        }
 
         var parse = parser.Parser{ .tokens = tokens.items };
         const parse_tree = try parse.parseInto(input_scratch);
+        if (parse.had_error) {
+            return;
+        }
 
         // Resolve pre pass for variable resolution.
         {
@@ -418,7 +424,7 @@ pub const Interpreter = struct {
         try self.execute(parse_tree);
     }
 
-    fn execute(self: *Self, statements: []const ast.Stmt) RuntimeError!void {
+    fn execute(self: *Self, statements: []const ast.Stmt) Allocator.Error!void {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
 
@@ -426,20 +432,22 @@ pub const Interpreter = struct {
             _ = arena.reset(std.heap.ArenaAllocator.ResetMode.retain_capacity);
             var val = self.executeStatement(stmt, arena.allocator()) catch |err| {
                 if (err == RuntimeError.Unimplemented) {
-                    _ = try self.output.write("Hit unimplemented part of the interpreter.");
+                    _ = self.output.write("Hit unimplemented part of the interpreter.") catch unreachable;
+                } else if (err == RuntimeError.OutOfMemory) {
+                    return RuntimeError.OutOfMemory;
                 } else {
                     const diagnostic = self.diagnostic.?;
                     main.reportError(
                         diagnostic.line_number,
                         &[_][]const u8{
-                            "Runtime Error: '",
+                            "Runtime error: '",
                             diagnostic.input,
                             "' ",
                             diagnostic.message,
                         },
                     );
                 }
-                return err;
+                return;
             };
             val.deinit();
         }
@@ -494,19 +502,19 @@ pub const Interpreter = struct {
                 var value = try self.evaluateExpression(e, arena);
                 defer value.deinit();
                 switch (value.repr()) {
-                    .number => |n| try self.output.print("{d}", .{n}),
-                    .string => |s| try self.output.print("{s}", .{s}),
-                    .bool_ => |b| try self.output.print("{}", .{b}),
-                    .nil => _ = try self.output.write("nil"),
-                    .ret => _ = try self.output.write("return"),
-                    .builtin => _ = try self.output.write("<native fn>"),
-                    .class => |c| try self.output.print("class {s}", .{c.name}),
-                    .instance => |i| try self.output.print("{s} instance", .{i.class.name}),
+                    .number => |n| self.output.print("{d}", .{n}) catch unreachable,
+                    .string => |s| self.output.print("{s}", .{s}) catch unreachable,
+                    .bool_ => |b| self.output.print("{}", .{b}) catch unreachable,
+                    .nil => _ = self.output.write("nil") catch unreachable,
+                    .ret => _ = self.output.write("return") catch unreachable,
+                    .builtin => _ = self.output.write("<native fn>") catch unreachable,
+                    .class => |c| self.output.print("class {s}", .{c.name}) catch unreachable,
+                    .instance => |i| self.output.print("{s} instance", .{i.class.name}) catch unreachable,
                     .function => |f| {
-                        try self.output.print("<fn {s}>", .{f.declaration.name.lexeme});
+                        self.output.print("<fn {s}>", .{f.declaration.name.lexeme}) catch unreachable;
                     },
                 }
-                _ = try self.output.write("\n");
+                _ = self.output.write("\n") catch unreachable;
             },
             .while_ => |*w| {
                 var cond = try self.evaluateExpression(&w.condition, arena);
@@ -554,7 +562,7 @@ pub const Interpreter = struct {
                         self.diagnostic = Diagnostic{
                             .input = s.name.lexeme,
                             .line_number = s.name.line,
-                            .message = "Superclass must be a class.",
+                            .message = "superclass must be a class.",
                         };
                         return RuntimeError.IllegalSuperClass;
                     }
@@ -713,7 +721,7 @@ pub const Interpreter = struct {
                         self.diagnostic = Diagnostic{
                             .line_number = g.name.line,
                             .input = g.name.lexeme,
-                            .message = "Unknown property.",
+                            .message = "unknown property.",
                         };
                         return RuntimeError.UnknownProperty;
                     },
@@ -722,7 +730,7 @@ pub const Interpreter = struct {
                 self.diagnostic = Diagnostic{
                     .line_number = g.name.line,
                     .input = g.name.lexeme,
-                    .message = "Only instances have properties.",
+                    .message = "only instances have properties.",
                 };
                 return RuntimeError.NonInstance;
             },
@@ -749,7 +757,7 @@ pub const Interpreter = struct {
                 self.diagnostic = Diagnostic{
                     .line_number = s.name.line,
                     .input = s.name.lexeme,
-                    .message = "Only instances have fields.",
+                    .message = "only instances have fields.",
                 };
                 return RuntimeError.NonInstance;
             },

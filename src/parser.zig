@@ -3,6 +3,7 @@ const token = @import("token.zig");
 const main = @import("main.zig");
 const ast = @import("ast.zig");
 const constants = @import("constants.zig");
+const Allocator = std.mem.Allocator;
 
 const ParseError = error{ UnexpectedToken, InvalidAssignment, OutOfMemory, TooManyArguments };
 
@@ -20,6 +21,7 @@ pub const Parser = struct {
 
     tokens: []token.Token,
     current: u32 = 0,
+    had_error: bool = false,
     diagnostic: ?Diagnostic = null,
     allocator: std.mem.Allocator = undefined,
 
@@ -39,26 +41,25 @@ pub const Parser = struct {
         }
     }
 
-    pub fn parseInto(self: *Self, input_scratch: std.mem.Allocator) ParseError![]ast.Stmt {
+    pub fn parseInto(self: *Self, input_scratch: std.mem.Allocator) Allocator.Error![]ast.Stmt {
         self.allocator = input_scratch;
         var result = std.ArrayList(ast.Stmt).init(self.allocator);
 
-        var last_err: ?ParseError = null;
         while (!self.isAtEnd()) {
             // Keep going on statement errors. We synchronize to the next statement beginning so that a mistake in
             // one statement should not interfere with parsing another statement. Therefore we give the user
             // as much information about their errors as possible. If any one error occurred we remember it and return
             // the last error to the caller. Therefore the caller can't execute an invalid syntax tree.
             const decl = self.declaration() catch |err| {
-                if (err == ParseError.OutOfMemory) return err;
+                if (err == ParseError.OutOfMemory) return ParseError.OutOfMemory;
+                self.had_error = true;
 
-                last_err = err;
                 if (self.diagnostic != null) {
                     const diagnostic = self.diagnostic.?;
                     const found = self.diagnostic.?.found;
                     main.reportError(
                         diagnostic.found.line,
-                        &[_][]const u8{ "Parse Error: '", found.lexeme, "' ", diagnostic.message },
+                        &[_][]const u8{ "Parse error: '", found.lexeme, "' ", diagnostic.message },
                     );
                 }
 
@@ -71,10 +72,6 @@ pub const Parser = struct {
                 continue;
             };
             try result.append(decl);
-        }
-
-        if (last_err != null) {
-            return last_err.?;
         }
 
         return result.toOwnedSlice();

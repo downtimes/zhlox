@@ -2,6 +2,7 @@ const std = @import("std");
 const token = @import("token.zig");
 const main = @import("main.zig");
 const constants = @import("constants.zig");
+const Allocator = std.mem.Allocator;
 
 const reserved_words = std.StaticStringMap(token.Type).initComptime(.{
     .{ "and", token.Type.and_ },
@@ -30,9 +31,20 @@ pub const Scanner = struct {
     start_of_lexeme: u32 = 0,
     current: u32 = 0,
     line: u32 = 1,
+    had_error: bool = false,
     source: []const u8,
 
-    pub fn scanTokens(self: *Self, input_scratch: std.mem.Allocator) !Return {
+    fn reportError(self: *Scanner, message: []const u8) void {
+        main.reportError(self.line, &[_][]const u8{
+            "Lex error: '",
+            self.lexeme(),
+            "' ",
+            message,
+        });
+        self.had_error = true;
+    }
+
+    pub fn scanTokens(self: *Self, input_scratch: std.mem.Allocator) Allocator.Error!Return {
         var tokens = Return.init(input_scratch);
         errdefer tokens.deinit();
 
@@ -105,11 +117,7 @@ pub const Scanner = struct {
                 }
 
                 if (self.isAtEnd()) {
-                    main.reportError(self.line, &[_][]const u8{
-                        "Lex Error: '",
-                        self.lexeme(),
-                        "' Unterminated string.",
-                    });
+                    self.reportError("untermintated string.");
                     return;
                 }
 
@@ -128,7 +136,10 @@ pub const Scanner = struct {
                     while (std.ascii.isDigit(self.peek())) _ = self.consume();
                 }
 
-                const number = try std.fmt.parseFloat(f64, self.lexeme());
+                const number = std.fmt.parseFloat(f64, self.lexeme()) catch blk: {
+                    self.reportError("failed to parse number.");
+                    break :blk 0;
+                };
                 try self.addToken(tokens, Type.number, token.Literal{ .number = number });
             },
             'a'...'z', 'A'...'Z', '_' => {
@@ -144,11 +155,7 @@ pub const Scanner = struct {
             },
             // Ignore whitespace.
             ' ', '\r', '\t' => {},
-            else => main.reportError(self.line, &[_][]const u8{
-                "Lex Error: '",
-                self.lexeme(),
-                "' Unexpected character in input.",
-            }),
+            else => self.reportError("unexpected character in input."),
         }
     }
 

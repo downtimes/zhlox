@@ -51,6 +51,17 @@ pub const Resolver = struct {
         }
     }
 
+    fn reportError(self: *Self, line: u32, message: []const u8) void {
+        main.reportError(
+            line,
+            &[_][]const u8{
+                "Resolve error: ",
+                message,
+            },
+        );
+        self.found_error = true;
+    }
+
     fn scope_depth(self: Self) usize {
         return self.scopes.items.len;
     }
@@ -80,13 +91,14 @@ pub const Resolver = struct {
 
                 if (c.super) |*s| {
                     if (std.mem.eql(u8, s.name.lexeme, c.name.lexeme)) {
-                        main.reportError(
+                        self.reportError(
                             s.name.line,
-                            &[_][]const u8{
-                                "Resolve error: A class can't inherit from itself.",
-                            },
+                            try std.fmt.allocPrint(
+                                self.allocator,
+                                "'{s}' a class can't inherit from itself.",
+                                .{c.name.lexeme},
+                            ),
                         );
-                        self.found_error = true;
                     }
                     try self.resolveVariable(s);
                 }
@@ -125,23 +137,11 @@ pub const Resolver = struct {
             },
             .ret => |*r| {
                 if (self.current_function_type == FunctionType.none) {
-                    main.reportError(
-                        r.line_number,
-                        &[_][]const u8{
-                            "Resolve error: return statement only allowed inside functions.",
-                        },
-                    );
-                    self.found_error = true;
+                    self.reportError(r.line_number, "return statement only allowed inside functions.");
                 }
                 if (r.value) |*v| {
                     if (self.current_function_type == FunctionType.constructor) {
-                        main.reportError(
-                            r.line_number,
-                            &[_][]const u8{
-                                "Resolve error: Can't return a value from an initializer.",
-                            },
-                        );
-                        self.found_error = true;
+                        self.reportError(r.line_number, "can't return a value from an initializer.");
                     }
                     try self.resolveExpr(v);
                 }
@@ -172,10 +172,10 @@ pub const Resolver = struct {
         if (std.mem.eql(u8, variable.name.lexeme, constants.this) and
             self.current_class_type == ClassType.none)
         {
-            main.reportError(variable.name.line, &[_][]const u8{
-                "Resolve error: '", constants.this, "' can't use outside of a class.",
-            });
-            self.found_error = true;
+            self.reportError(
+                variable.name.line,
+                std.fmt.comptimePrint("'{s}' can't use outside of a class.", .{constants.this}),
+            );
             return;
         }
 
@@ -184,16 +184,14 @@ pub const Resolver = struct {
         if (scope) |s| {
             if (s.get(variable.name.lexeme)) |assign_finished| {
                 if (!assign_finished) {
-                    main.reportError(
+                    self.reportError(
                         variable.name.line,
-                        &[_][]const u8{
-                            "Resolve error: '",
-                            variable.name.lexeme,
-                            "' ",
-                            "Can't read local variable in its own initializer.",
-                        },
+                        try std.fmt.allocPrint(
+                            self.allocator,
+                            "'{s}' can't read local variable in its own initializer.",
+                            .{variable.name.lexeme},
+                        ),
                     );
-                    self.found_error = true;
                 }
             }
             try self.resolveLocal(variable, variable.name.lexeme);
@@ -268,13 +266,14 @@ pub const Resolver = struct {
 
         const scope: *std.StringArrayHashMap(bool) = &self.scopes.items[self.scope_depth() - 1];
         if (scope.contains(name.lexeme)) {
-            main.reportError(name.line, &[_][]const u8{
-                "Resolve error: '",
-                name.lexeme,
-                "' ",
-                "variable with same name in local scope already exists. ",
-                "Redeclaring a variable in the same scope is not allowed.",
-            });
+            const text =
+                \\'{s}' variable with same name in local scope already exists. 
+                \\ Redeclaring a variable in the same scope is not allowed.
+            ;
+            self.reportError(
+                name.line,
+                try std.fmt.allocPrint(self.allocator, text, .{name.lexeme}),
+            );
             self.found_error = true;
         }
         try scope.put(name.lexeme, false);
