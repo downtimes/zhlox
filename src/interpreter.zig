@@ -25,7 +25,19 @@ const Function = struct {
 
 const Class = struct {
     name: []const u8, // This memory is not owned, it points into input_scratch.
+    super: ?*Rc,
     methods: std.StringHashMap(Function),
+
+    fn findMethod(self: Class, name: []const u8) ?Function {
+        const method = self.methods.get(name);
+        if (method) |m| {
+            return m;
+        }
+        if (self.super) |s| {
+            return s.repr.class.findMethod(name);
+        }
+        return null;
+    }
 };
 
 const Instance = struct {
@@ -53,6 +65,9 @@ pub const Represent = union(enum) {
                 a.free(s);
             },
             .class => |*c| {
+                if (c.super) |s| {
+                    s.deinit();
+                }
                 var it = c.methods.valueIterator();
                 while (it.next()) |m| {
                     if (m.env.refs > 0) {
@@ -93,6 +108,11 @@ pub const Represent = union(enum) {
                 var fields = result.instance.fields.valueIterator();
                 while (fields.next()) |f| {
                     f.*.ref();
+                }
+            },
+            .class => |c| {
+                if (c.super) |s| {
+                    s.ref();
                 }
             },
             .function => |_| {
@@ -328,6 +348,7 @@ pub const RuntimeError = error{
     OutOfMemory,
     NonInstance,
     UnknownProperty,
+    IllegalSuperClass,
 } || std.io.AnyWriter.Error;
 
 pub const Diagnostic = struct {
@@ -525,6 +546,26 @@ pub const Interpreter = struct {
                 return try self.executeBlock(statements, new_env);
             },
             .class => |*c| {
+                var super: ?*Rc = null;
+                if (c.super) |s| {
+                    var class = try self.getVariable(s);
+                    errdefer class.deinit();
+                    if (@as(std.meta.Tag(Represent), class.repr()) != .class) {
+                        self.diagnostic = Diagnostic{
+                            .input = s.name.lexeme,
+                            .line_number = s.name.line,
+                            .message = "Superclass must be a class.",
+                        };
+                        return RuntimeError.IllegalSuperClass;
+                    }
+
+                    // Don't call class.deinit() since the super variable takes
+                    // over the reference count of the Rc.
+                    class = try class.promote(self.allocator);
+                    super = class.rc;
+                }
+                defer if (super) |s| s.deinit();
+
                 nil = try nil.promote(self.allocator);
                 errdefer nil.deinit();
                 try self.active_environment.define(c.name.lexeme, nil.rc);
@@ -544,6 +585,7 @@ pub const Interpreter = struct {
                 var class = try Value.createRc(self.allocator, Represent{
                     .class = Class{
                         .name = c.name.lexeme,
+                        .super = super,
                         .methods = methods,
                     },
                 });
@@ -651,7 +693,7 @@ pub const Interpreter = struct {
                             return Value{ .rc = v };
                         }
 
-                        const method = i.class.methods.get(g.name.lexeme);
+                        const method = i.class.findMethod(g.name.lexeme);
                         if (method) |m| {
                             var bound = try environment.Environment.create_with_parent(self.allocator, m.env);
                             // This call saves the fields we had when we we get the method

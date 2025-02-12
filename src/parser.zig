@@ -97,8 +97,15 @@ pub const Parser = struct {
     fn class_declaration(self: *Self) Stmt {
         try self.consume(token.Type.identifier, "Expected class name");
         const identifier = self.previous();
-        try self.consume(token.Type.left_brace, "Expected '{' before class body.");
 
+        var super: ?ast.Variable = null;
+        if (self.match(&[_]token.Type{token.Type.less})) {
+            try self.consume(token.Type.identifier, "Expected superclass name");
+            const super_ident = self.previous();
+            super = ast.Variable{ .name = super_ident, .resolve_steps = null };
+        }
+
+        try self.consume(token.Type.left_brace, "Expected '{' before class body.");
         var methods = std.ArrayList(ast.Function).init(self.allocator);
         while (!self.check(token.Type.right_brace) and !self.isAtEnd()) {
             const fun = try self.function(FunctionKind.method);
@@ -109,6 +116,7 @@ pub const Parser = struct {
 
         return ast.Stmt{ .class = ast.Class{
             .name = identifier,
+            .super = super,
             .methods = try methods.toOwnedSlice(),
         } };
     }

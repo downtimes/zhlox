@@ -9,3 +9,5 @@ class Test {
     return "MyHero";
   }
 }
+
+class Oops < Oops {} // class can't inherit from itself.

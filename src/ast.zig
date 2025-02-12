@@ -66,6 +66,7 @@ pub const Return = struct {
 
 pub const Class = struct {
     name: token.Token,
+    super: ?Variable,
     methods: []Function,
 };
 
