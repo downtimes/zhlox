@@ -21,6 +21,22 @@ const Function = struct {
     declaration: *const ast.Function,
     env: *environment.Environment,
     constructor: bool,
+
+    fn bind(self: Function, instance: *Rc, allocator: Allocator) !Value {
+        var bound = try environment.Environment.create_with_parent(allocator, self.env);
+        // This call saves the fields we had when we look up the method.
+        // I'm not sure this is semantically the same as what lox does.
+        // What happens when a field is later added to the instance in lox?
+        try bound.define(constants.this, instance);
+        bound.refs += 1;
+        return Value{ .temp = Represent{
+            .function = Function{
+                .declaration = self.declaration,
+                .env = bound,
+                .constructor = self.constructor,
+            },
+        } };
+    }
 };
 
 const Class = struct {
@@ -159,16 +175,8 @@ pub const Represent = union(enum) {
 
                 if (constructor) |construct| {
                     defer instance.deinit();
-                    var bound = try environment.Environment.create_with_parent(interpreter.allocator, construct.env);
-                    try bound.define(constants.this, instance.rc);
-                    bound.refs += 1;
-                    var initialization = Value{ .temp = Represent{
-                        .function = Function{
-                            .declaration = construct.declaration,
-                            .env = bound,
-                            .constructor = true,
-                        },
-                    } };
+                    var initialization = try construct.bind(instance.rc, interpreter.allocator);
+                    initialization.temp.function.constructor = true;
                     defer initialization.deinit();
                     return try initialization.call(arguments, interpreter, arena);
                 } else {
@@ -578,6 +586,11 @@ pub const Interpreter = struct {
                 errdefer nil.deinit();
                 try self.active_environment.define(c.name.lexeme, nil.rc);
 
+                if (super) |s| {
+                    self.active_environment = try environment.Environment.create_with_parent(self.allocator, self.active_environment);
+                    try self.active_environment.define(constants.super, s);
+                }
+
                 var methods = std.StringHashMap(Function).init(self.allocator);
                 try methods.ensureTotalCapacity(@intCast(c.methods.len));
                 for (c.methods) |*m| {
@@ -598,6 +611,11 @@ pub const Interpreter = struct {
                     },
                 });
                 defer class.deinit();
+
+                if (super != null) {
+                    self.active_environment = self.active_environment.parent.?;
+                }
+
                 self.active_environment.assign(c.name.lexeme, class.rc) catch {
                     // Do nothing since we defined the variable before so this case is never hit.
                 };
@@ -703,19 +721,7 @@ pub const Interpreter = struct {
 
                         const method = i.class.findMethod(g.name.lexeme);
                         if (method) |m| {
-                            var bound = try environment.Environment.create_with_parent(self.allocator, m.env);
-                            // This call saves the fields we had when we we get the method
-                            // I'm not sure this is semantically the same as what lox should be
-                            // what happens when a field is later added to the instance?
-                            try bound.define(constants.this, object.rc);
-                            bound.refs += 1;
-                            return Value{ .temp = Represent{
-                                .function = Function{
-                                    .declaration = m.declaration,
-                                    .env = bound,
-                                    .constructor = m.constructor,
-                                },
-                            } };
+                            return m.bind(object.rc, self.allocator);
                         }
 
                         self.diagnostic = Diagnostic{
@@ -760,6 +766,30 @@ pub const Interpreter = struct {
                     .message = "only instances have fields.",
                 };
                 return RuntimeError.NonInstance;
+            },
+            .super => |super| {
+                // We know super should not be in global environment and should not be the current active environment.
+                std.debug.assert(super.keyword.resolve_steps != null and super.keyword.resolve_steps.? > 0);
+                // Assumes the environment in which this is bound is the environment under which super is bound.
+                // Also assumes that if we find an ast with super the super class and this instance are 100% bound.
+                var class = self.active_environment.getInParent(super.keyword.resolve_steps.?, constants.super).?;
+                var object = self.active_environment.getInParent(super.keyword.resolve_steps.? - 1, constants.this).?;
+                defer class.deinit();
+                defer object.deinit();
+                std.debug.assert(@as(std.meta.Tag(Represent), class.repr) == .class);
+                std.debug.assert(@as(std.meta.Tag(Represent), object.repr) == .instance);
+
+                const method = class.repr.class.findMethod(super.method.lexeme);
+                if (method) |m| {
+                    return m.bind(object, self.allocator);
+                }
+
+                self.diagnostic = Diagnostic{
+                    .line_number = super.method.line,
+                    .input = super.method.lexeme,
+                    .message = "undefined property.",
+                };
+                return RuntimeError.UndefinedVariable;
             },
             .call => |call| {
                 var callee = try self.evaluateExpression(call.callee, arena);

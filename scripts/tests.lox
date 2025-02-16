@@ -1,13 +1,10 @@
-print this;
+class Test {}
 
-fun a() {
-  return this;
-}
-
-class Test {
-  init() {
-    return "MyHero";
+class MyTest < Test {
+  bla() {
+    super.blubb();
   }
 }
 
-class Oops < Oops {} // class can't inherit from itself.
+var myTest = MyTest();
+myTest.bla();

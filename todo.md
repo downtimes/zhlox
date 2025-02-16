@@ -3,7 +3,5 @@ with known good output. It's hard at the moment to know if we accidentally broke
 something.
 - Implement the optional anonymous function feature
 - Improve the ref counted nature of environments and values.
-    - Having values sometimes live in arenas and sometimes in global memory is
-      strange
     - having to be careful on final cleanup when environments clean up values
       which try to clean up environments (functions) is strange. 

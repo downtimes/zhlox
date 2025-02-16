@@ -42,6 +42,11 @@ pub const VariableDeclaration = struct {
     initializer: ?Expr,
 };
 
+pub const Super = struct {
+    keyword: Variable,
+    method: token.Token,
+};
+
 pub const Conditional = struct {
     condition: Expr,
     then: *Stmt,
@@ -107,6 +112,7 @@ pub const Expr = union(enum) {
     call: Call,
     get: Get,
     set: Set,
+    super: Super,
     variable: Variable,
     assign: Assignment,
 };

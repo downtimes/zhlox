@@ -16,7 +16,7 @@ const reserved_words = std.StaticStringMap(token.Type).initComptime(.{
     .{ "or", token.Type.or_ },
     .{ "print", token.Type.print },
     .{ "return", token.Type.return_ },
-    .{ "super", token.Type.super },
+    .{ constants.super, token.Type.super },
     .{ constants.this, token.Type.this },
     .{ "true", token.Type.true },
     .{ "var", token.Type.var_ },

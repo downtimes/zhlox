@@ -15,6 +15,7 @@ const FunctionType = enum {
 const ClassType = enum {
     none,
     class,
+    sublcass,
 };
 
 // Has to work in tandem with the creation of environments in the interpreter.
@@ -100,7 +101,12 @@ pub const Resolver = struct {
                             ),
                         );
                     }
+
+                    self.current_class_type = ClassType.sublcass;
                     try self.resolveVariable(s);
+
+                    try self.begin_scope();
+                    try self.define(constants.super);
                 }
 
                 try self.begin_scope();
@@ -115,6 +121,9 @@ pub const Resolver = struct {
                 }
 
                 self.end_scope();
+                if (c.super != null) {
+                    self.end_scope();
+                }
                 try self.define(c.name.lexeme);
             },
             .function => |*f| {
@@ -217,6 +226,20 @@ pub const Resolver = struct {
             .set => |*s| {
                 try self.resolveExpr(s.value);
                 try self.resolveExpr(s.object);
+            },
+            .super => |*s| {
+                if (self.current_class_type == ClassType.none) {
+                    self.reportError(
+                        s.keyword.name.line,
+                        std.fmt.comptimePrint("can't use '{s}' outside of class.", .{constants.super}),
+                    );
+                } else if (self.current_class_type != ClassType.sublcass) {
+                    self.reportError(
+                        s.keyword.name.line,
+                        std.fmt.comptimePrint("can't use '{s}' in a class without super class.", .{constants.super}),
+                    );
+                }
+                try self.resolveLocal(&s.keyword, s.keyword.name.lexeme);
             },
             .call => |*c| {
                 try self.resolveExpr(c.callee);

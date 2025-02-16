@@ -535,6 +535,17 @@ pub const Parser = struct {
             } };
         }
 
+        if (self.match(&[_]token.Type{token.Type.super})) {
+            const keyword = self.previous();
+            try self.consume(token.Type.dot, "Expected '.' after super.");
+            try self.consume(token.Type.identifier, "Expected super class method name.");
+            const method = self.previous();
+            return ast.Expr{ .super = ast.Super{
+                .keyword = ast.Variable{ .name = keyword, .resolve_steps = null },
+                .method = method,
+            } };
+        }
+
         if (self.match(&[_]token.Type{token.Type.left_paren})) {
             const grouping = try self.allocator.create(ast.Expr);
             grouping.* = try self.expression();
