@@ -29,11 +29,11 @@ pub const Parser = struct {
         self.advance();
 
         while (!self.isAtEnd()) {
-            if (self.previous().type_ == token.Type.semicolon) return; // Synchronization point is the statement border.
+            if (self.previous().type == token.Type.semicolon) return; // Synchronization point is the statement border.
 
-            switch (self.peek().type_) {
+            switch (self.peek().type) {
                 //Any of the keywords also opens a statement and we are good to go
-                .class, .fun, .var_, .for_, .if_, .while_, .print, .return_ => return,
+                .class, .fun, .@"var", .@"for", .@"if", .@"while", .print, .@"return" => return,
                 else => {},
             }
 
@@ -43,7 +43,7 @@ pub const Parser = struct {
 
     pub fn parseInto(self: *Self, input_scratch: std.mem.Allocator) Allocator.Error![]ast.Stmt {
         self.allocator = input_scratch;
-        var result = std.ArrayList(ast.Stmt).init(self.allocator);
+        var result: std.ArrayListUnmanaged(ast.Stmt) = .empty;
 
         while (!self.isAtEnd()) {
             // Keep going on statement errors. We synchronize to the next statement beginning so that a mistake in
@@ -71,17 +71,17 @@ pub const Parser = struct {
                 }
                 continue;
             };
-            try result.append(decl);
+            try result.append(self.allocator, decl);
         }
 
-        return result.toOwnedSlice();
+        return result.toOwnedSlice(self.allocator);
     }
 
     fn declaration(self: *Self) Stmt {
         if (self.match(&[_]token.Type{token.Type.fun})) {
             return self.function(FunctionKind.function);
         }
-        if (self.match(&[_]token.Type{token.Type.var_})) {
+        if (self.match(&[_]token.Type{token.Type.@"var"})) {
             return self.variableDeclaration();
         }
         if (self.match(&[_]token.Type{token.Type.class})) {
@@ -103,10 +103,10 @@ pub const Parser = struct {
         }
 
         try self.consume(token.Type.left_brace, "Expected '{' before class body.");
-        var methods = std.ArrayList(ast.Function).init(self.allocator);
+        var methods: std.ArrayListUnmanaged(ast.Function) = .empty;
         while (!self.check(token.Type.right_brace) and !self.isAtEnd()) {
             const fun = try self.function(FunctionKind.method);
-            try methods.append(fun.function);
+            try methods.append(self.allocator, fun.function);
         }
 
         try self.consume(token.Type.right_brace, "Expected '}' after class body.");
@@ -114,7 +114,7 @@ pub const Parser = struct {
         return ast.Stmt{ .class = ast.Class{
             .name = identifier,
             .super = super,
-            .methods = try methods.toOwnedSlice(),
+            .methods = try methods.toOwnedSlice(self.allocator),
         } };
     }
 
@@ -124,14 +124,14 @@ pub const Parser = struct {
         const name = self.previous();
 
         try self.consume(token.Type.left_paren, "Expected '(' after function name.");
-        var params = std.ArrayList(token.Token).init(self.allocator);
+        var params: std.ArrayListUnmanaged(token.Token) = .empty;
 
         if (!self.check(token.Type.right_paren)) {
             try self.consume(token.Type.identifier, "Expected parameter name.");
-            try params.append(self.previous());
+            try params.append(self.allocator, self.previous());
             while (self.match(&[_]token.Type{token.Type.comma})) {
                 try self.consume(token.Type.identifier, "Expected parameter name.");
-                try params.append(self.previous());
+                try params.append(self.allocator, self.previous());
                 if (params.items.len >= constants.max_params) {
                     self.diagnostic = Diagnostic{
                         .found = self.peek(),
@@ -150,7 +150,7 @@ pub const Parser = struct {
         const body = try self.block();
         return ast.Stmt{ .function = ast.Function{
             .name = name,
-            .params = try params.toOwnedSlice(),
+            .params = try params.toOwnedSlice(self.allocator),
             .body = body,
         } };
     }
@@ -169,11 +169,11 @@ pub const Parser = struct {
     }
 
     fn statement(self: *Self) Stmt {
-        if (self.match(&[_]token.Type{token.Type.for_})) return self.forStatement();
-        if (self.match(&[_]token.Type{token.Type.if_})) return self.ifStatement();
+        if (self.match(&[_]token.Type{token.Type.@"for"})) return self.forStatement();
+        if (self.match(&[_]token.Type{token.Type.@"if"})) return self.ifStatement();
         if (self.match(&[_]token.Type{token.Type.print})) return self.printStatement();
-        if (self.match(&[_]token.Type{token.Type.return_})) return self.returnStatement();
-        if (self.match(&[_]token.Type{token.Type.while_})) return self.whileStatement();
+        if (self.match(&[_]token.Type{token.Type.@"return"})) return self.returnStatement();
+        if (self.match(&[_]token.Type{token.Type.@"while"})) return self.whileStatement();
         if (self.match(&[_]token.Type{token.Type.left_brace})) {
             return ast.Stmt{ .block = try self.block() };
         }
@@ -189,7 +189,7 @@ pub const Parser = struct {
         const then = try self.allocator.create(ast.Stmt);
         then.* = try self.statement();
         var els: ?*ast.Stmt = null;
-        if (self.match(&[_]token.Type{token.Type.else_})) {
+        if (self.match(&[_]token.Type{token.Type.@"else"})) {
             els = try self.allocator.create(ast.Stmt);
             els.?.* = try self.statement();
         }
@@ -198,15 +198,15 @@ pub const Parser = struct {
     }
 
     fn block(self: *Self) ParseError![]ast.Stmt {
-        var statements = std.ArrayList(ast.Stmt).init(self.allocator);
+        var statements: std.ArrayListUnmanaged(ast.Stmt) = .empty;
 
         while (!self.check(token.Type.right_brace) and !self.isAtEnd()) {
             const decl = try self.declaration();
-            try statements.append(decl);
+            try statements.append(self.allocator, decl);
         }
 
         try self.consume(token.Type.right_brace, "Expected '}' at the end of a block.");
-        return statements.toOwnedSlice();
+        return statements.toOwnedSlice(self.allocator);
     }
 
     fn printStatement(self: *Self) Stmt {
@@ -221,13 +221,13 @@ pub const Parser = struct {
         var init: ?ast.Stmt = null;
         if (self.match(&[_]token.Type{token.Type.semicolon})) {
             // init already null, nothing to do.
-        } else if (self.match(&[_]token.Type{token.Type.var_})) {
+        } else if (self.match(&[_]token.Type{token.Type.@"var"})) {
             init = try self.variableDeclaration();
         } else {
             init = try self.expressionStatement();
         }
 
-        var cond = ast.Expr{ .literal = ast.Literal{ .bool_ = true } };
+        var cond = ast.Expr{ .literal = ast.Literal{ .bool = true } };
         if (!self.check(token.Type.semicolon)) {
             cond = try self.expression();
         }
@@ -250,31 +250,31 @@ pub const Parser = struct {
             .block => |*b| {
                 // Stuff the increment after the while body.
                 if (after) |a| {
-                    var append = std.ArrayList(ast.Stmt).fromOwnedSlice(self.allocator, b.*);
-                    try append.append(ast.Stmt{ .expr = a });
-                    b.* = try append.toOwnedSlice();
+                    var append = std.ArrayListUnmanaged(ast.Stmt).fromOwnedSlice(b.*);
+                    try append.append(self.allocator, ast.Stmt{ .expr = a });
+                    b.* = try append.toOwnedSlice(self.allocator);
                 }
-                body = ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = b.* } };
+                body = ast.Stmt{ .@"while" = ast.WhileStmt{ .condition = cond, .body = b.* } };
             },
             else => {
-                var while_body = std.ArrayList(ast.Stmt).init(self.allocator);
-                try while_body.append(body);
+                var while_body: std.ArrayListUnmanaged(ast.Stmt) = .empty;
+                try while_body.append(self.allocator, body);
                 // Stuff the increment after the while body.
                 if (after) |a| {
-                    try while_body.append(ast.Stmt{ .expr = a });
+                    try while_body.append(self.allocator, ast.Stmt{ .expr = a });
                 }
-                body = ast.Stmt{ .while_ = ast.WhileStmt{
+                body = ast.Stmt{ .@"while" = ast.WhileStmt{
                     .condition = cond,
-                    .body = try while_body.toOwnedSlice(),
+                    .body = try while_body.toOwnedSlice(self.allocator),
                 } };
             },
         }
 
         if (init) |i| {
-            var sugar = std.ArrayList(ast.Stmt).init(self.allocator);
-            try sugar.append(i);
-            try sugar.append(body);
-            body = ast.Stmt{ .block = try sugar.toOwnedSlice() };
+            var sugar = try std.ArrayListUnmanaged(ast.Stmt).initCapacity(self.allocator, 2);
+            sugar.appendAssumeCapacity(i);
+            sugar.appendAssumeCapacity(body);
+            body = ast.Stmt{ .block = try sugar.toOwnedSlice(self.allocator) };
         }
 
         return body;
@@ -299,14 +299,14 @@ pub const Parser = struct {
         const stmt = try self.statement();
         switch (stmt) {
             .block => |b| {
-                return ast.Stmt{ .while_ = ast.WhileStmt{ .condition = cond, .body = b } };
+                return ast.Stmt{ .@"while" = ast.WhileStmt{ .condition = cond, .body = b } };
             },
             else => {
-                var statements = std.ArrayList(ast.Stmt).init(self.allocator);
-                try statements.append(stmt);
-                return ast.Stmt{ .while_ = ast.WhileStmt{
+                const place = try self.allocator.create(ast.Stmt);
+                place.* = stmt;
+                return ast.Stmt{ .@"while" = ast.WhileStmt{
                     .condition = cond,
-                    .body = try statements.toOwnedSlice(),
+                    .body = place[0..1],
                 } };
             },
         }
@@ -360,7 +360,7 @@ pub const Parser = struct {
     fn logicalOr(self: *Self) Expr {
         var result = try self.logicalAnd();
 
-        while (self.match(&[_]token.Type{token.Type.or_})) {
+        while (self.match(&[_]token.Type{token.Type.@"or"})) {
             const operator = self.previous();
             const left = try self.allocator.create(ast.Expr);
             left.* = result;
@@ -374,7 +374,7 @@ pub const Parser = struct {
     fn logicalAnd(self: *Self) Expr {
         var result = try self.equality();
 
-        while (self.match(&[_]token.Type{token.Type.and_})) {
+        while (self.match(&[_]token.Type{token.Type.@"and"})) {
             const operator = self.previous();
             const left = try self.allocator.create(ast.Expr);
             left.* = result;
@@ -478,11 +478,11 @@ pub const Parser = struct {
     }
 
     fn finishCall(self: *Self, callee: ast.Expr) Expr {
-        var arguments = std.ArrayList(ast.Expr).init(self.allocator);
+        var arguments: std.ArrayListUnmanaged(ast.Expr) = .empty;
         if (!self.check(token.Type.right_paren)) {
-            try arguments.append(try self.expression());
+            try arguments.append(self.allocator, try self.expression());
             while (self.match(&[_]token.Type{token.Type.comma})) {
-                try arguments.append(try self.expression());
+                try arguments.append(self.allocator, try self.expression());
                 if (arguments.items.len >= constants.max_params) {
                     self.diagnostic = Diagnostic{
                         .found = self.peek(),
@@ -504,16 +504,16 @@ pub const Parser = struct {
         return ast.Expr{ .call = ast.Call{
             .callee = callee_place,
             .line_number = closing_paren.line,
-            .arguments = try arguments.toOwnedSlice(),
+            .arguments = try arguments.toOwnedSlice(self.allocator),
         } };
     }
 
     fn primary(self: *Self) Expr {
         if (self.match(&[_]token.Type{token.Type.false})) {
-            return ast.Expr{ .literal = ast.Literal{ .bool_ = false } };
+            return ast.Expr{ .literal = ast.Literal{ .bool = false } };
         }
         if (self.match(&[_]token.Type{token.Type.true})) {
-            return ast.Expr{ .literal = ast.Literal{ .bool_ = true } };
+            return ast.Expr{ .literal = ast.Literal{ .bool = true } };
         }
         if (self.match(&[_]token.Type{token.Type.nil})) {
             return ast.Expr{ .literal = ast.Literal.nil };
@@ -574,7 +574,7 @@ pub const Parser = struct {
 
     fn check(self: Self, token_type: token.Type) bool {
         if (self.isAtEnd()) return false;
-        return self.peek().type_ == token_type;
+        return self.peek().type == token_type;
     }
 
     fn peek(self: Self) token.Token {
@@ -589,8 +589,8 @@ pub const Parser = struct {
         if (!self.isAtEnd()) self.current += 1;
     }
 
-    fn consume(self: *Self, type_: token.Type, message: []const u8) ParseError!void {
-        if (self.check(type_)) {
+    fn consume(self: *Self, @"type": token.Type, message: []const u8) ParseError!void {
+        if (self.check(@"type")) {
             self.advance();
             return;
         }
@@ -605,6 +605,6 @@ pub const Parser = struct {
     fn isAtEnd(self: Self) bool {
         // Safe since it is guaranteed by our parser that we always have an eof
         // token at the end of our token stream.
-        return self.peek().type_ == token.Type.eof;
+        return self.peek().type == token.Type.eof;
     }
 };

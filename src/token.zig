@@ -24,21 +24,21 @@ pub const Type = enum {
     string,
     number,
     class,
-    else_,
+    @"else",
     false,
     fun,
-    for_,
-    if_,
+    @"for",
+    @"if",
     nil,
-    or_,
-    and_,
+    @"or",
+    @"and",
     print,
-    return_,
+    @"return",
     super,
     this,
     true,
-    var_,
-    while_,
+    @"var",
+    @"while",
     eof,
 };
 
@@ -48,8 +48,7 @@ pub const Literal = union(enum) {
 };
 
 pub const Token = struct {
-    const Self = @This();
-    type_: Type,
+    type: Type,
     lexeme: []const u8, // String is not owned, it points into the input_scratch.
     literal: ?Literal,
     line: u32,

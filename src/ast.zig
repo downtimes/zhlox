@@ -28,7 +28,7 @@ pub const Call = struct {
 pub const Literal = union(enum) {
     number: f64,
     string: []const u8, // The string is not owned, it points into the input_scratch
-    bool_: bool,
+    bool: bool,
     nil: void,
 };
 
@@ -79,7 +79,7 @@ pub const Stmt = union(enum) {
     expr: Expr,
     cond: Conditional,
     print: Expr,
-    while_: WhileStmt,
+    @"while": WhileStmt,
     var_decl: VariableDeclaration,
     function: Function,
     class: Class,

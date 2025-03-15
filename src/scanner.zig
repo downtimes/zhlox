@@ -5,28 +5,28 @@ const constants = @import("constants.zig");
 const Allocator = std.mem.Allocator;
 
 const reserved_words = std.StaticStringMap(token.Type).initComptime(.{
-    .{ "and", token.Type.and_ },
+    .{ "and", token.Type.@"and" },
     .{ "class", token.Type.class },
-    .{ "else", token.Type.else_ },
+    .{ "else", token.Type.@"else" },
     .{ "false", token.Type.false },
-    .{ "for", token.Type.for_ },
+    .{ "for", token.Type.@"for" },
     .{ "fun", token.Type.fun },
-    .{ "if", token.Type.if_ },
+    .{ "if", token.Type.@"if" },
     .{ "nil", token.Type.nil },
-    .{ "or", token.Type.or_ },
+    .{ "or", token.Type.@"or" },
     .{ "print", token.Type.print },
-    .{ "return", token.Type.return_ },
+    .{ "return", token.Type.@"return" },
     .{ constants.super, token.Type.super },
     .{ constants.this, token.Type.this },
     .{ "true", token.Type.true },
-    .{ "var", token.Type.var_ },
-    .{ "while", token.Type.while_ },
+    .{ "var", token.Type.@"var" },
+    .{ "while", token.Type.@"while" },
 });
 
 // TODO: make language utf8 compatible?
 pub const Scanner = struct {
     const Self = @This();
-    const Return = std.ArrayList(token.Token);
+    const Return = std.ArrayListUnmanaged(token.Token);
 
     start_of_lexeme: u32 = 0,
     current: u32 = 0,
@@ -45,15 +45,15 @@ pub const Scanner = struct {
     }
 
     pub fn scanTokens(self: *Self, input_scratch: std.mem.Allocator) Allocator.Error!Return {
-        var tokens = Return.init(input_scratch);
-        errdefer tokens.deinit();
+        var tokens: Return = .empty;
+        errdefer tokens.deinit(input_scratch);
 
         while (!self.isAtEnd()) {
             self.start_of_lexeme = self.current;
-            try self.scanToken(&tokens);
+            try self.scanToken(input_scratch, &tokens);
         }
 
-        try self.addToken(&tokens, token.Type.eof, null);
+        try self.addToken(input_scratch, &tokens, token.Type.eof, null);
         return tokens;
     }
 
@@ -61,50 +61,50 @@ pub const Scanner = struct {
         return self.source[self.start_of_lexeme..self.current];
     }
 
-    fn addToken(self: Self, tokens: *Return, type_: token.Type, literal: ?token.Literal) !void {
-        try tokens.append(token.Token{
-            .type_ = type_,
+    fn addToken(self: Self, allocator: std.mem.Allocator, tokens: *Return, @"type": token.Type, literal: ?token.Literal) !void {
+        try tokens.append(allocator, token.Token{
+            .type = @"type",
             .lexeme = self.lexeme(),
             .literal = literal,
             .line = self.line,
         });
     }
 
-    fn scanToken(self: *Self, tokens: *Return) !void {
+    fn scanToken(self: *Self, allocator: std.mem.Allocator, tokens: *Return) !void {
         const Type = token.Type;
         const c = self.consume();
         switch (c) {
-            '(' => try self.addToken(tokens, Type.left_paren, null),
-            ')' => try self.addToken(tokens, Type.right_paren, null),
-            '{' => try self.addToken(tokens, Type.left_brace, null),
-            '}' => try self.addToken(tokens, Type.right_brace, null),
-            ',' => try self.addToken(tokens, Type.comma, null),
-            '.' => try self.addToken(tokens, Type.dot, null),
-            '-' => try self.addToken(tokens, Type.minus, null),
-            '+' => try self.addToken(tokens, Type.plus, null),
-            ';' => try self.addToken(tokens, Type.semicolon, null),
-            '*' => try self.addToken(tokens, Type.star, null),
+            '(' => try self.addToken(allocator, tokens, Type.left_paren, null),
+            ')' => try self.addToken(allocator, tokens, Type.right_paren, null),
+            '{' => try self.addToken(allocator, tokens, Type.left_brace, null),
+            '}' => try self.addToken(allocator, tokens, Type.right_brace, null),
+            ',' => try self.addToken(allocator, tokens, Type.comma, null),
+            '.' => try self.addToken(allocator, tokens, Type.dot, null),
+            '-' => try self.addToken(allocator, tokens, Type.minus, null),
+            '+' => try self.addToken(allocator, tokens, Type.plus, null),
+            ';' => try self.addToken(allocator, tokens, Type.semicolon, null),
+            '*' => try self.addToken(allocator, tokens, Type.star, null),
             '!' => {
                 const t = if (self.consumeOnMatch('=')) Type.bang_equal else Type.bang;
-                try self.addToken(tokens, t, null);
+                try self.addToken(allocator, tokens, t, null);
             },
             '=' => {
                 const t = if (self.consumeOnMatch('=')) Type.equal_equal else Type.equal;
-                try self.addToken(tokens, t, null);
+                try self.addToken(allocator, tokens, t, null);
             },
             '<' => {
                 const t = if (self.consumeOnMatch('=')) Type.less_equal else Type.less;
-                try self.addToken(tokens, t, null);
+                try self.addToken(allocator, tokens, t, null);
             },
             '>' => {
                 const t = if (self.consumeOnMatch('=')) Type.greater_equal else Type.greater;
-                try self.addToken(tokens, t, null);
+                try self.addToken(allocator, tokens, t, null);
             },
             '/' => {
                 if (self.consumeOnMatch('/')) {
                     while (!self.isAtEnd() and self.peek() != '\n') _ = self.consume();
                 } else {
-                    try self.addToken(tokens, Type.slash, null);
+                    try self.addToken(allocator, tokens, Type.slash, null);
                 }
             },
             '\n' => {
@@ -125,7 +125,7 @@ pub const Scanner = struct {
                 // Drop quotes for the literal value as well by subslicing the
                 // lexeme
                 const quoted_string = self.lexeme();
-                try self.addToken(tokens, Type.string, token.Literal{ .string = quoted_string[1 .. quoted_string.len - 1] });
+                try self.addToken(allocator, tokens, Type.string, token.Literal{ .string = quoted_string[1 .. quoted_string.len - 1] });
             },
             '0'...'9' => {
                 while (std.ascii.isDigit(self.peek())) _ = self.consume();
@@ -140,7 +140,7 @@ pub const Scanner = struct {
                     self.reportError("failed to parse number.");
                     break :blk 0;
                 };
-                try self.addToken(tokens, Type.number, token.Literal{ .number = number });
+                try self.addToken(allocator, tokens, Type.number, token.Literal{ .number = number });
             },
             'a'...'z', 'A'...'Z', '_' => {
                 var next = self.peek();
@@ -151,7 +151,7 @@ pub const Scanner = struct {
                 const text = self.lexeme();
                 const t = reserved_words.get(text);
 
-                try self.addToken(tokens, t orelse Type.identifier, null);
+                try self.addToken(allocator, tokens, t orelse Type.identifier, null);
             },
             // Ignore whitespace.
             ' ', '\r', '\t' => {},

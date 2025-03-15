@@ -31,7 +31,7 @@ pub const Resolver = struct {
 
     // Probably arena?
     allocator: std.mem.Allocator,
-    scopes: std.ArrayList(std.StringArrayHashMap(bool)),
+    scopes: std.ArrayListUnmanaged(std.StringHashMapUnmanaged(bool)),
     found_error: bool,
     current_function_type: FunctionType,
     current_class_type: ClassType,
@@ -39,7 +39,7 @@ pub const Resolver = struct {
     pub fn init(arena: *std.heap.ArenaAllocator) Self {
         return Resolver{
             .allocator = arena.allocator(),
-            .scopes = std.ArrayList(std.StringArrayHashMap(bool)).init(arena.allocator()),
+            .scopes = .empty,
             .found_error = false,
             .current_function_type = FunctionType.none,
             .current_class_type = ClassType.none,
@@ -113,11 +113,11 @@ pub const Resolver = struct {
                 try self.define(constants.this);
 
                 for (c.methods) |*m| {
-                    const type_ = if (std.mem.eql(u8, m.name.lexeme, constants.constructor))
+                    const @"type" = if (std.mem.eql(u8, m.name.lexeme, constants.constructor))
                         FunctionType.constructor
                     else
                         FunctionType.method;
-                    try self.resolveFunction(m, type_);
+                    try self.resolveFunction(m, @"type");
                 }
 
                 self.end_scope();
@@ -155,7 +155,7 @@ pub const Resolver = struct {
                     try self.resolveExpr(v);
                 }
             },
-            .while_ => |*w| {
+            .@"while" => |*w| {
                 try self.resolveExpr(&w.condition);
                 try self.resolve(w.body);
             },
@@ -287,7 +287,7 @@ pub const Resolver = struct {
     fn declare(self: *Self, name: token.Token) !void {
         if (self.scope_depth() == 0) return;
 
-        const scope: *std.StringArrayHashMap(bool) = &self.scopes.items[self.scope_depth() - 1];
+        const scope: *std.StringHashMapUnmanaged(bool) = &self.scopes.items[self.scope_depth() - 1];
         if (scope.contains(name.lexeme)) {
             const text =
                 \\'{s}' variable with same name in local scope already exists. 
@@ -299,23 +299,22 @@ pub const Resolver = struct {
             );
             self.found_error = true;
         }
-        try scope.put(name.lexeme, false);
+        try scope.put(self.allocator, name.lexeme, false);
     }
 
     fn define(self: Self, name: []const u8) !void {
         if (self.scopes.items.len == 0) return;
 
-        const scope: *std.StringArrayHashMap(bool) = &self.scopes.items[self.scope_depth() - 1];
-        try scope.put(name, true);
+        const scope: *std.StringHashMapUnmanaged(bool) = &self.scopes.items[self.scope_depth() - 1];
+        try scope.put(self.allocator, name, true);
     }
 
     fn begin_scope(self: *Self) !void {
-        const map = std.StringArrayHashMap(bool).init(self.allocator);
-        try self.scopes.append(map);
+        try self.scopes.append(self.allocator, .empty);
     }
 
     fn end_scope(self: *Self) void {
-        var popped = self.scopes.pop();
-        popped.deinit();
+        var popped = self.scopes.pop().?;
+        popped.deinit(self.allocator);
     }
 };

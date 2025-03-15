@@ -26,9 +26,9 @@ fn runRepl(allocator: std.mem.Allocator) !void {
     defer interpret.deinit();
 
     while (true) {
-        var buffer = std.ArrayList(u8).init(input_allocator);
+        var buffer: std.ArrayListUnmanaged(u8) = .empty;
         _ = try stdout.write("> ");
-        try stdin.streamUntilDelimiter(buffer.writer(), '\n', null); //Does not contain the \n!
+        try stdin.streamUntilDelimiter(buffer.writer(input_allocator), '\n', null); //Does not contain the \n!
         if (builtin.os.tag == .windows) {
             _ = buffer.pop(); // Pop the \r on windows.
         }
@@ -61,7 +61,7 @@ fn runFile(path: [:0]const u8, allocator: std.mem.Allocator) !void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     var args = try std.process.argsWithAllocator(gpa.allocator());
     defer args.deinit();

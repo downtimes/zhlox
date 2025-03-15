@@ -14,15 +14,15 @@ pub const Environment = struct {
 
     allocator: std.mem.Allocator,
     parent: ?*Environment,
-    children: std.ArrayList(*Environment),
-    values: std.StringHashMap(*interpreter.Rc),
+    children: std.ArrayListUnmanaged(*Environment),
+    values: std.StringHashMapUnmanaged(*interpreter.Rc),
     refs: u32,
 
     // Parent environment must be valid as long as this environment is used.
     pub fn create_with_parent(allocator: std.mem.Allocator, parent: *Environment) !*Self {
         var env = try create(allocator);
         env.parent = parent;
-        try parent.children.append(env);
+        try parent.children.append(parent.allocator, env);
         return env;
     }
 
@@ -31,8 +31,8 @@ pub const Environment = struct {
         env_place.* = Environment{
             .allocator = allocator,
             .parent = null,
-            .children = std.ArrayList(*Environment).init(allocator),
-            .values = std.StringHashMap(*interpreter.Rc).init(allocator),
+            .children = .empty,
+            .values = .empty,
             .refs = 0,
         };
         return env_place;
@@ -49,8 +49,8 @@ pub const Environment = struct {
         while (it.next()) |v| {
             v.*.deinit();
         }
-        self.values.deinit();
-        self.children.deinit();
+        self.values.deinit(self.allocator);
+        self.children.deinit(self.allocator);
 
         // We checked that we are not the root. So it is certain that we have
         // a parent environment.
@@ -68,7 +68,7 @@ pub const Environment = struct {
         for (self.children.items) |c| {
             c.deinit();
         }
-        self.children.deinit();
+        self.children.deinit(self.allocator);
         self.refs = 0;
 
         if (self.parent) |p| {
@@ -80,7 +80,7 @@ pub const Environment = struct {
         while (it.next()) |v| {
             v.*.deinit();
         }
-        self.values.deinit();
+        self.values.deinit(self.allocator);
 
         self.allocator.destroy(self);
     }
@@ -96,7 +96,7 @@ pub const Environment = struct {
 
     pub fn define(self: *Self, name: []const u8, value: *interpreter.Rc) !void {
         // We allow shadowing of variables by removing entries instead of blocking addition.
-        const resp = try self.values.getOrPut(name);
+        const resp = try self.values.getOrPut(self.allocator, name);
         value.ref();
         if (resp.found_existing) {
             resp.value_ptr.*.deinit();

@@ -42,7 +42,7 @@ const Function = struct {
 const Class = struct {
     name: []const u8, // This memory is not owned, it points into input_scratch.
     super: ?*Rc,
-    methods: std.StringHashMap(Function),
+    methods: std.StringHashMapUnmanaged(Function),
 
     fn findMethod(self: Class, name: []const u8) ?Function {
         const method = self.methods.get(name);
@@ -58,7 +58,7 @@ const Class = struct {
 
 const Instance = struct {
     class: Class,
-    fields: std.StringHashMap(*Rc),
+    fields: std.StringHashMapUnmanaged(*Rc),
 };
 
 // Add local, global differentiation.
@@ -67,7 +67,7 @@ pub const Represent = union(enum) {
 
     string: []const u8, // String values in here are owned by the value.
     number: f64,
-    bool_: bool,
+    bool: bool,
     nil: void,
     ret: void,
     builtin: Builtin,
@@ -91,14 +91,18 @@ pub const Represent = union(enum) {
                         m.env.clean_unused(true);
                     }
                 }
-                c.methods.deinit();
+                if (allocator) |a| {
+                    c.methods.deinit(a);
+                }
             },
             .instance => |*i| {
                 var fields = i.fields.valueIterator();
                 while (fields.next()) |f| {
                     f.*.deinit();
                 }
-                i.fields.deinit();
+                if (allocator) |a| {
+                    i.fields.deinit(a);
+                }
             },
             .function => |*f| {
                 if (f.env.refs > 0) {
@@ -120,7 +124,7 @@ pub const Represent = union(enum) {
                 result.string = try allocator.dupe(u8, s);
             },
             .instance => |i| {
-                result.instance.fields = try i.fields.cloneWithAllocator(allocator);
+                result.instance.fields = try i.fields.clone(allocator);
                 var fields = result.instance.fields.valueIterator();
                 while (fields.next()) |f| {
                     f.*.ref();
@@ -146,7 +150,7 @@ pub const Represent = union(enum) {
         arena: Allocator,
     ) CallError!Value {
         switch (self.*) {
-            .string, .number, .bool_, .nil, .instance, .ret => return ValueError.NonCallable,
+            .string, .number, .bool, .nil, .instance, .ret => return ValueError.NonCallable,
             .builtin => |f| {
                 if (f.arity != arguments.len) {
                     return ValueError.Arity;
@@ -168,7 +172,7 @@ pub const Represent = union(enum) {
                     Represent{
                         .instance = Instance{
                             .class = c,
-                            .fields = std.StringHashMap(*Rc).init(arena),
+                            .fields = .empty,
                         },
                     },
                 );
@@ -220,7 +224,7 @@ pub const Represent = union(enum) {
     // Strange rule according to Lox definition...
     fn isTruthy(self: Self) bool {
         switch (self) {
-            .bool_ => |b| return b,
+            .bool => |b| return b,
             .nil, .ret => return false,
             inline else => return true,
         }
@@ -512,7 +516,7 @@ pub const Interpreter = struct {
                 switch (value.repr()) {
                     .number => |n| self.output.print("{d}", .{n}) catch unreachable,
                     .string => |s| self.output.print("{s}", .{s}) catch unreachable,
-                    .bool_ => |b| self.output.print("{}", .{b}) catch unreachable,
+                    .bool => |b| self.output.print("{}", .{b}) catch unreachable,
                     .nil => _ = self.output.write("nil") catch unreachable,
                     .ret => _ = self.output.write("return") catch unreachable,
                     .builtin => _ = self.output.write("<native fn>") catch unreachable,
@@ -524,7 +528,7 @@ pub const Interpreter = struct {
                 }
                 _ = self.output.write("\n") catch unreachable;
             },
-            .while_ => |*w| {
+            .@"while" => |*w| {
                 var cond = try self.evaluateExpression(&w.condition, arena);
                 defer cond.deinit();
 
@@ -591,8 +595,8 @@ pub const Interpreter = struct {
                     try self.active_environment.define(constants.super, s);
                 }
 
-                var methods = std.StringHashMap(Function).init(self.allocator);
-                try methods.ensureTotalCapacity(@intCast(c.methods.len));
+                var methods: std.StringHashMapUnmanaged(Function) = .empty;
+                try methods.ensureTotalCapacity(self.allocator, @intCast(c.methods.len));
                 for (c.methods) |*m| {
                     const constructor = std.mem.eql(u8, m.name.lexeme, constants.constructor);
                     const function = Function{
@@ -600,7 +604,7 @@ pub const Interpreter = struct {
                         .env = self.active_environment,
                         .constructor = constructor,
                     };
-                    try methods.put(m.name.lexeme, function);
+                    methods.putAssumeCapacity(m.name.lexeme, function);
                 }
 
                 var class = try Value.createRc(self.allocator, Represent{
@@ -651,7 +655,7 @@ pub const Interpreter = struct {
         switch (expr.*) {
             .literal => |l| {
                 return switch (l) {
-                    .bool_ => |b| Value{ .temp = Represent{ .bool_ = b } },
+                    .bool => |b| Value{ .temp = Represent{ .bool = b } },
                     .number => |n| Value{ .temp = Represent{ .number = n } },
                     // The value is not duped here yet, it will happen when the
                     // block goes out of scope or the value is put into an environment
@@ -666,7 +670,7 @@ pub const Interpreter = struct {
             .logical => |l| {
                 var left = try self.evaluateExpression(l.left, arena);
 
-                if (l.operator.type_ == token.Type.and_) {
+                if (l.operator.type == token.Type.@"and") {
                     if (!left.isTruthy()) return left;
                 } else {
                     if (left.isTruthy()) return left;
@@ -679,11 +683,11 @@ pub const Interpreter = struct {
                 var right = try self.evaluateExpression(u.right, arena);
                 defer right.deinit();
 
-                if (u.operator.type_ == token.Type.bang) {
-                    return Value{ .temp = Represent{ .bool_ = !right.isTruthy() } };
+                if (u.operator.type == token.Type.bang) {
+                    return Value{ .temp = Represent{ .bool = !right.isTruthy() } };
                 }
 
-                if (u.operator.type_ == token.Type.minus) {
+                if (u.operator.type == token.Type.minus) {
                     if (@as(std.meta.Tag(Represent), right.repr()) == .number) {
                         return Value{ .temp = Represent{ .number = -right.repr().number } };
                     }
@@ -750,7 +754,7 @@ pub const Interpreter = struct {
                         var value = try self.evaluateExpression(s.value, arena);
                         errdefer value.deinit();
                         value = try value.promote(self.allocator);
-                        const resp = try i.fields.getOrPut(s.name.lexeme);
+                        const resp = try i.fields.getOrPut(object.rc.allocator, s.name.lexeme);
                         value.rc.ref();
                         if (resp.found_existing) {
                             resp.value_ptr.*.deinit();
@@ -794,13 +798,13 @@ pub const Interpreter = struct {
             .call => |call| {
                 var callee = try self.evaluateExpression(call.callee, arena);
                 defer callee.deinit();
-                var arguments = std.ArrayList(Value).init(arena);
+                var arguments = try std.ArrayListUnmanaged(Value).initCapacity(arena, call.arguments.len);
                 defer for (arguments.items) |*arg| {
                     arg.deinit();
                 };
 
                 for (call.arguments) |*arg| {
-                    try arguments.append(try self.evaluateExpression(arg, arena));
+                    arguments.appendAssumeCapacity(try self.evaluateExpression(arg, arena));
                 }
 
                 if (callee.call(arguments.items, self, arena)) |value| {
@@ -865,7 +869,7 @@ pub const Interpreter = struct {
         if (@as(std.meta.Tag(Represent), lrepr) == .number and
             @as(std.meta.Tag(Represent), rrepr) == .number)
         {
-            switch (binary.operator.type_) {
+            switch (binary.operator.type) {
                 .minus => return Value{ .temp = Represent{
                     .number = lrepr.number - rrepr.number,
                 } },
@@ -882,16 +886,16 @@ pub const Interpreter = struct {
                     .number = lrepr.number + rrepr.number,
                 } },
                 .greater => return Value{ .temp = Represent{
-                    .bool_ = lrepr.number > rrepr.number,
+                    .bool = lrepr.number > rrepr.number,
                 } },
                 .greater_equal => return Value{ .temp = Represent{
-                    .bool_ = lrepr.number >= rrepr.number,
+                    .bool = lrepr.number >= rrepr.number,
                 } },
                 .less => return Value{ .temp = Represent{
-                    .bool_ = lrepr.number < rrepr.number,
+                    .bool = lrepr.number < rrepr.number,
                 } },
                 .less_equal => return Value{ .temp = Represent{
-                    .bool_ = lrepr.number <= rrepr.number,
+                    .bool = lrepr.number <= rrepr.number,
                 } },
                 else => {
                     // Do nothing and let the later code handle this case.
@@ -902,15 +906,15 @@ pub const Interpreter = struct {
         if (@as(std.meta.Tag(Represent), lrepr) == .string and
             @as(std.meta.Tag(Represent), rrepr) == .string)
         {
-            if (binary.operator.type_ == .plus) {
+            if (binary.operator.type == .plus) {
                 const combined = try std.mem.concat(arena, u8, &[_][]const u8{ lrepr.string, rrepr.string });
                 return Value{ .temp = Represent{ .string = combined } };
             }
         }
 
-        switch (binary.operator.type_) {
-            .equal_equal => return Value{ .temp = Represent{ .bool_ = left.equal(right) } },
-            .bang_equal => return Value{ .temp = Represent{ .bool_ = !left.equal(right) } },
+        switch (binary.operator.type) {
+            .equal_equal => return Value{ .temp = Represent{ .bool = left.equal(right) } },
+            .bang_equal => return Value{ .temp = Represent{ .bool = !left.equal(right) } },
             .minus, .star, .slash, .less, .less_equal, .greater, .greater_equal => {
                 self.diagnostic = Diagnostic{
                     .line_number = binary.operator.line,
